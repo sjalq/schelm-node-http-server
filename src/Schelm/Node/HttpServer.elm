@@ -362,11 +362,13 @@ reconcile subscriptions state =
             in
             case Dict.get id grouped of
                 Just [ tagger ] -> Dict.insert id { generation = if wasPresent then generation else generation + 1, mode = Present, tagger = Just tagger } acc
-                Just (_ :: _ :: _) -> Dict.insert id { generation = generation + 1, mode = Ambiguous, tagger = Nothing } acc
+                Just (_ :: _ :: _) ->
+                    let wasAmbiguous = previous |> Maybe.map (\r -> r.mode == Ambiguous) |> Maybe.withDefault False
+                    in Dict.insert id { generation = if wasAmbiguous then generation else generation + 1, mode = Ambiguous, tagger = Nothing } acc
                 _ ->
                     case previous of
                         Nothing -> acc
-                        Just _ -> Dict.insert id { generation = generation + 1, mode = Absent, tagger = Nothing } acc
+                        Just route -> Dict.insert id { generation = if route.mode == Absent then generation else generation + 1, mode = Absent, tagger = Nothing } acc
     in { state | routes = Dict.foldl one Dict.empty ids }
 dispatchAll router commands state =
     case commands of

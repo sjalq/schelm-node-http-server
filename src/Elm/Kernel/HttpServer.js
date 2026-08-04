@@ -4,7 +4,7 @@ import Elm.Kernel.List exposing (fromArray, toArray)
 import Elm.Kernel.Scheduler exposing (binding, succeed, rawSpawn)
 import Platform exposing (sendToSelf)
 */
-/* generated canonical-sha256 4bbcad4d202837c9284aa6c35ee06d7fc4d3bd138dca8a5ac88c285c6f1e9f3a */
+/* generated canonical-sha256 1affc77068eab181468f603ca9c3cf14a08ca1db2d11fe996b51d9de4ed7f186 */
 "use strict";
 
 const http = require("node:http");
@@ -132,7 +132,7 @@ class ServerRegistry {
     const requestId = this.nextRequest++, bodyId = this.nextBody++, responseId = this.nextResponse++;
     const exchange = { requestId, bodyId, responseId, req, res, listener, reserve, bodyDone: false, responseDone: false, terminal: false, timer: null };
     listener.activeBySocket.set(req.socket, exchange); listener.exchanges.add(exchange); listener.accepted++;
-    const body = { id: bodyId, exchange, pending: false, ended: false, bytes: 0, reserve: 0, timer: null };
+    const body = { id: bodyId, exchange, pending: false, ended: false, bytes: 0, limit: null, reserve: 0, timer: null };
     this.bodies.set(bodyId, body); this.responses.set(responseId, exchange);
     const rawRequest = { id: requestId, method_: String(req.method || ""), target_: String(req.url || ""), targetForm_: classifyTarget(req.method, req.url || ""), version: String(req.httpVersion), headers_: rawPairs(req.rawHeaders, this.limit(listener.options, "headerPairs")), remote: String(req.socket.remoteAddress || ""), encrypted_: !!req.socket.encrypted };
     const incoming = { kind: "request", request: rawRequest, bodyId, responseId, upgradeId: 0, reason: "" };
@@ -145,12 +145,12 @@ class ServerRegistry {
     const body = this.bodies.get(bodyId);
     if (!body || body.ended) { this.emit(router, makeFact(operationId, "unavailable", bodyId, EMPTY_BYTES(), [])); return; }
     if (body.pending) { this.emit(router, makeFact(operationId, "claimed", bodyId, EMPTY_BYTES(), [])); return; }
-    body.pending = true; const { req, listener } = body.exchange; let claimed = false;
+    body.pending = true; body.limit = body.limit === null ? limit : Math.min(body.limit, limit); const { req, listener } = body.exchange; let claimed = false;
     const done = (kind, bytes, trailers) => { if (claimed) return; claimed = true; body.pending = false; clearTimeout(body.timer); cleanup(); this.emit(router, makeFact(operationId, kind, bodyId, bytes || EMPTY_BYTES(), trailers || [])); };
     const cleanup = () => { req.removeListener("data", onData); req.removeListener("end", onEnd); req.removeListener("error", onError); req.removeListener("aborted", onAbort); };
     const onData = chunk => {
       req.pause(); const size = chunk.byteLength;
-      if (size > limit || body.bytes + size > this.limit(listener.options, "requestBytes")) { done("too-large"); this.cleanupExchange(body.exchange, true); return; }
+      if (body.bytes + size > body.limit || body.bytes + size > this.limit(listener.options, "requestBytes")) { done("too-large"); this.cleanupExchange(body.exchange, true); return; }
       const reserve = this.budget.reserve(listener.id, "requestBytes", size, this.limit(listener.options, "requestBytes"));
       if (!reserve) { done("too-large"); this.cleanupExchange(body.exchange, true); return; }
       const copy = Buffer.from(chunk); this.budget.release(reserve); body.bytes += size; done("chunk", new DataView(copy.buffer, copy.byteOffset, copy.byteLength));
@@ -188,19 +188,21 @@ class ServerRegistry {
   send(router, operationId, responseId, code, headers, bytes, makeFact) {
     const exchange = this.responses.get(responseId); if (!exchange) { this.emit(router, makeFact(operationId, "ended")); return; }
     clearTimeout(exchange.timer); const body = bytesBuffer(bytes); exchange.__hasBody = body.length > 0;
-    if (body.length > this.limit(exchange.listener.options, "responseBytes") || !this.applyHead(exchange, code, headers)) { this.emit(router, makeFact(operationId, body.length ? "too-large" : "invalid")); return; }
+    if (body.length > this.limit(exchange.listener.options, "responseBytes")) { this.emit(router, makeFact(operationId, "too-large")); return; }
+    if (!this.applyHead(exchange, code, headers)) { this.emit(router, makeFact(operationId, "invalid")); return; }
     const reserve = this.budget.reserve(exchange.listener.id, "responseBytes", body.length, this.limit(exchange.listener.options, "responseBytes")); if (!reserve) { this.emit(router, makeFact(operationId, "too-large")); return; }
     this.terminal(exchange, router, operationId, makeFact, this.option(exchange.listener.options, "finishTimeout"));
     try { exchange.res.end(body, () => this.budget.release(reserve)); } catch (_) { this.budget.release(reserve); exchange.res.destroy(); }
   }
   stream(router, operationId, responseId, code, headers, makeFact) {
     const exchange = this.responses.get(responseId); if (!exchange || !this.applyHead(exchange, code, headers)) { this.emit(router, makeFact(operationId, "invalid", 0)); return; }
-    clearTimeout(exchange.timer); const writerId = this.nextWriter++; this.writers.set(writerId, { id: writerId, exchange, pending: false, ended: false, bytes: 0 }); this.emit(router, makeFact(operationId, "ok", writerId));
+    clearTimeout(exchange.timer); const writerId = this.nextWriter++; this.writers.set(writerId, { id: writerId, exchange, pending: false, ended: false, bytes: 0, bodyAllowed: code !== 204 && code !== 304 && exchange.req.method !== "HEAD" }); this.emit(router, makeFact(operationId, "ok", writerId));
   }
   write(router, operationId, writerId, bytes, makeFact) {
     const writer = this.writers.get(writerId); if (!writer || writer.ended) { this.emit(router, makeFact(operationId, "ended")); return; }
     if (writer.pending) { this.emit(router, makeFact(operationId, "pending")); return; }
     const body = bytesBuffer(bytes), limit = this.limit(writer.exchange.listener.options, "responseBytes");
+    if (!writer.bodyAllowed && body.length > 0) { this.emit(router, makeFact(operationId, "invalid")); return; }
     if (writer.bytes + body.length > limit) { this.emit(router, makeFact(operationId, "too-large")); return; }
     const reserve = this.budget.reserve(writer.exchange.listener.id, "responseBytes", body.length, limit); if (!reserve) { this.emit(router, makeFact(operationId, "too-large")); return; }
     writer.bytes += body.length;
