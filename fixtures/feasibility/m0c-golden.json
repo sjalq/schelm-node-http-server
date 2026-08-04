@@ -1,0 +1,49 @@
+{
+  "digest": "ef4acd67124f25ad5165be0279338c69034c3ac0440974db4923fdcc6bae2b37",
+  "events": [
+    {
+      "kind": "bind-finished",
+      "detail": "cancelled"
+    },
+    {
+      "kind": "bind-started",
+      "detail": ""
+    },
+    {
+      "kind": "route-a",
+      "detail": "stable-a"
+    },
+    {
+      "kind": "route-b",
+      "detail": "stable-b"
+    },
+    {
+      "kind": "upgrade-reject:upgrade-reject",
+      "detail": "{\"destroyed\":true,\"remaining\":0}"
+    },
+    {
+      "kind": "upgrade-throw:upgrade-throw",
+      "detail": "{\"destroyed\":true,\"remaining\":0}"
+    },
+    {
+      "kind": "upgrade-timeout:upgrade-timeout",
+      "detail": "{\"destroyed\":true,\"remaining\":0}"
+    },
+    {
+      "kind": "upgrade-transfer:upgrade-transfer",
+      "detail": "{\"exact\":true,\"head\":\"81026869\",\"duplicate\":true,\"remaining\":0}"
+    },
+    {
+      "kind": "write-close",
+      "detail": "{\"writes\":1,\"falseWrites\":1,\"drains\":0,\"retained\":0}"
+    },
+    {
+      "kind": "write-error",
+      "detail": "{\"writes\":1,\"falseWrites\":1,\"drains\":0,\"retained\":0}"
+    },
+    {
+      "kind": "write-ok",
+      "detail": "{\"writes\":2,\"falseWrites\":1,\"drains\":1,\"retained\":0}"
+    }
+  ]
+}

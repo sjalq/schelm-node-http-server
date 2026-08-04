@@ -19,6 +19,17 @@ node scripts/runtime-probes.cjs
 
 They execute an actual pre-listen cancellation, instrument real
 `write(false)`/`drain` behavior against a paused client, and exercise the
-proposed private exactly-once upgrade bridge with the harness-pinned `ws`
-8.21.1 package. The absolute harness path is fixture-only provenance and must
-not enter production package code.
+proposed private exactly-once upgrade bridge with offline pinned `ws` 8.21.1.
+
+The mandatory production-shaped effect-manager gate is:
+
+```sh
+node scripts/run-m0c.cjs
+```
+
+It compiles/runs debug and optimized workers and checks lawful manager-owned
+reply routing through `SelfMsg`, `Cmd.map`, duplicate terminal suppression,
+stable/ambiguous/absent subscription routing, deterministic write
+false/drain/error/close, and exact non-empty-head upgrade transfer plus
+reject/timeout/throw cleanup. Its normalized trace digest is checked in
+`m0c-golden.json`.
