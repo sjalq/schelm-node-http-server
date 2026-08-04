@@ -10,14 +10,22 @@ type Msg
     = Started Server.Operation
     | Listening Server.Operation (Result Server.ListenError Server.Listener)
     | Http Server.Event
-    | Discarded (Result Server.BodyError ())
+    | BodyRead Server.BodyEvent
     | Sent (Result Server.WriteError Server.ResponseResult)
     | Closed (Result Server.CloseError Server.CloseReport)
 
 type alias Model = { listener : Maybe Server.Listener }
 
 main : Program () Model Msg
-main = Platform.worker { init = \_ -> ( { listener = Nothing }, Server.listen Server.initialize (Server.loopback Server.ephemeralPort) Server.defaults { onStarted = Started, onFinished = Listening } ), update = update, subscriptions = subscriptions }
+main =
+    Platform.worker
+        { init = \_ ->
+            let
+                options =
+                    Server.withBodyTimeout 100 Server.defaults
+                        |> Result.withDefault Server.defaults
+            in
+            ( { listener = Nothing }, Server.listen Server.initialize (Server.loopback Server.ephemeralPort) options { onStarted = Started, onFinished = Listening } ), update = update, subscriptions = subscriptions }
 
 subscriptions model =
     case model.listener of
@@ -33,9 +41,15 @@ update msg model =
                 Err error -> ( model, report (Encode.string (Server.listenErrorMessage error)) )
         Http event ->
             case event of
-                Server.RequestOffered _ _ body response -> ( model, Cmd.batch [ Server.discardBody body Discarded, Server.send response (Server.text 200 "ok") Sent ] )
+                Server.RequestOffered _ _ body response ->
+                    case Server.bodyLimit 1024 of
+                        Ok limit_ -> ( model, Cmd.batch [ Server.readBody body limit_ BodyRead, Server.send response (Server.text 200 "ok") Sent ] )
+                        Err _ -> ( model, Cmd.none )
                 _ -> ( model, Cmd.none )
-        Discarded _ -> ( model, Cmd.none )
+        BodyRead event ->
+            case event of
+                Server.BodyChunk _ _ -> ( model, report (Encode.string "chunk-paused") )
+                _ -> ( model, Cmd.none )
         Sent _ ->
             case model.listener of
                 Just listener -> ( model, Server.close listener Server.graceful Closed )

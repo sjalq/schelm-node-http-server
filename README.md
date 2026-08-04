@@ -11,7 +11,7 @@ HttpServer.close listener HttpServer.graceful Closed
 ```
 
 The listener owns network resources until `close` settles. Request bodies are
-pull-driven. Streaming writes retain one chunk and honor Node backpressure.
+pull-driven. A delivered chunk retains its byte reservation only until the next demand/discard or the bounded body deadline; expiry destroys the paused connection and releases ownership. Streaming writes retain one chunk and honor Node backpressure.
 `AcceptedByNode` means the response emitted `finish`; it does not mean the peer
 received or persisted bytes. Public binding requires an explicit acknowledgement.
 All limits and waiting states are bounded. Each effects wave admits at most 1024 commands and at most 4096 one-shot replies remain pending; excess commands receive typed overload results. See module docs for recovery errors.

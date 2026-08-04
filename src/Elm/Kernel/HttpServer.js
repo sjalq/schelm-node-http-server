@@ -4,7 +4,7 @@ import Elm.Kernel.List exposing (fromArray, toArray)
 import Elm.Kernel.Scheduler exposing (binding, succeed, rawSpawn)
 import Platform exposing (sendToSelf)
 */
-/* generated canonical-sha256 fb5611c6eee16cf5d8dbcbdc37e109489c6f9dc8ffe6a48550d568e9ccec5d87 */
+/* generated canonical-sha256 c7279861d5b43bf8db51f0116f45e5ef661c8ab1b25db2cce1946dd9680f275a */
 "use strict";
 
 const http = require("node:http");
@@ -155,6 +155,7 @@ class ServerRegistry {
     if (!body || body.ended) { this.emit(router, makeFact(operationId, "unavailable", bodyId, EMPTY_BYTES(), [])); return; }
     if (body.pending) { this.emit(router, makeFact(operationId, "claimed", bodyId, EMPTY_BYTES(), [])); return; }
     if (body.copyReserve) { this.budget.release(body.copyReserve); body.copyReserve = 0; }
+    clearTimeout(body.timer); body.timer = null;
     body.pending = true; body.limit = body.limit === null ? limit : Math.min(body.limit, limit); const { req, listener } = body.exchange; let claimed = false;
     const done = (kind, bytes, trailers) => { if (claimed) return; claimed = true; body.pending = false; clearTimeout(body.timer); cleanup(); this.emit(router, makeFact(operationId, kind, bodyId, bytes || EMPTY_BYTES(), trailers || [])); };
     const cleanup = () => { req.removeListener("data", onData); req.removeListener("end", onEnd); req.removeListener("error", onError); req.removeListener("aborted", onAbort); };
@@ -163,7 +164,12 @@ class ServerRegistry {
       if (body.bytes + size > body.limit || body.bytes + size > this.limit(listener.options, "requestBytes")) { done("too-large"); this.cleanupExchange(body.exchange, true); return; }
       const reserve = this.budget.reserve(listener.id, "requestBytes", size, this.limit(listener.options, "requestBytes"));
       if (!reserve) { done("too-large"); this.cleanupExchange(body.exchange, true); return; }
-      const copy = Buffer.from(chunk); body.copyReserve = reserve; body.bytes += size; done("chunk", new DataView(copy.buffer, copy.byteOffset, copy.byteLength));
+      const copy = Buffer.from(chunk); body.copyReserve = reserve; body.bytes += size;
+      done("chunk", new DataView(copy.buffer, copy.byteOffset, copy.byteLength));
+      if (!body.ended && body.copyReserve) body.timer = setTimeout(() => {
+        if (!body.copyReserve || body.pending || body.exchange.terminal) return;
+        this.cleanupExchange(body.exchange, true, "forced");
+      }, this.option(listener.options, "bodyTimeout"));
     };
     const onEnd = () => { body.ended = true; this.bodies.delete(bodyId); body.exchange.bodyDone = true; done("complete", EMPTY_BYTES(), rawPairs(req.rawTrailers || [], this.limit(listener.options, "headerPairs"))); this.maybeExchangeDone(body.exchange); };
     const onError = () => done("aborted"); const onAbort = () => done("aborted");
@@ -174,6 +180,7 @@ class ServerRegistry {
     const body = this.bodies.get(bodyId); if (!body) { this.emit(router, makeFact(operationId, "unavailable")); return; }
     if (body.pending) { this.emit(router, makeFact(operationId, "claimed")); return; }
     if (body.copyReserve) { this.budget.release(body.copyReserve); body.copyReserve = 0; }
+    clearTimeout(body.timer); body.timer = null;
     body.pending = true;
     const limit = this.limit(body.exchange.listener.options, "requestBytes"); let bytes = 0, settled = false;
     const finish = kind => { if (settled) return; settled = true; body.pending = false; clearTimeout(timer); cleanup(); this.emit(router, makeFact(operationId, kind)); };
@@ -234,7 +241,7 @@ class ServerRegistry {
   maybeExchangeDone(exchange) { if (exchange.bodyDone && exchange.responseDone) this.cleanupExchange(exchange, !!exchange.req.socket.__schelmPipelined); }
   cleanupExchange(exchange, destroy, outcome = "completed") {
     if (exchange.terminal) return; exchange.terminal = true; clearTimeout(exchange.timer);
-    const body = this.bodies.get(exchange.bodyId); if (body && body.copyReserve) this.budget.release(body.copyReserve);
+    const body = this.bodies.get(exchange.bodyId); if (body) clearTimeout(body.timer); if (body && body.copyReserve) this.budget.release(body.copyReserve);
     this.bodies.delete(exchange.bodyId); this.responses.delete(exchange.responseId); exchange.listener.exchanges.delete(exchange); exchange.listener.activeBySocket.delete(exchange.req.socket); this.budget.release(exchange.reserve);
     for (const [id, writer] of this.writers) if (writer.exchange === exchange) this.writers.delete(id);
     if (destroy) try { exchange.req.socket.destroy(); } catch (_) {}

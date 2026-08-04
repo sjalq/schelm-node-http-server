@@ -12,7 +12,7 @@ Date: 2025-08-06. Authority runtime: pinned Node 24.4.1.
    Reply entries are removed before delivery; stable numeric route owners distinguish replacement without function equality;
    generations reject stale or ambiguous unsolicited work.
 3. **Bounded ownership:** one reservation authority enforces package-global hard caps and per-listener caps for listeners,
-   connections, exchanges, copied body/write bytes, and upgrades. Request-copy reservations remain live until the next body ownership command or terminal cleanup. Bodies are
+   connections, exchanges, copied body/write bytes, and upgrades. Request-copy reservations remain live until the next body ownership command or terminal cleanup. Delivery rearms the bounded body deadline; if the application sends a response but never demands/discards again, expiry destroys the paused socket, removes the exchange, and releases byte reservations deterministically. Bodies are
    pull-driven, writes retain at most one chunk, and every waiting state ends by
    fact, deadline, or close.
 4. **Honest transport semantics:** HTTP/1.1 keep-alive is sequential;
@@ -31,7 +31,7 @@ Date: 2025-08-06. Authority runtime: pinned Node 24.4.1.
 - Bounded exhaustive model: 5,380,840 explored nodes, checked count and digest.
 - Real Node tests cover duplicate request headers, pull bodies, `finish`, actual
   backpressure/drain over 4 MiB, pipelining rejection, slow headers, absent and
-  timed-out decisions, exact non-empty upgrade `head`, duplicate claim, invalid-send recovery, disjoint close accounting, and the production pinned adapter calling `handleUpgrade`.
+  timed-out decisions, exact non-empty upgrade `head`, duplicate claim, invalid-send recovery, disjoint close accounting, delivered-copy abandonment in real Node and production debug/opt workers, and the production pinned adapter calling `handleUpgrade`.
 - Scale gate performs 10,000 indexed reserve/release operations across 200
   listeners with no retained reservations.
 - Artifact, deterministic archive, and provenance gates reject ambient `ws`,
