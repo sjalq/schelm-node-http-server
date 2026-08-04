@@ -334,7 +334,7 @@ type Reply msg
     | WriteReply (Result WriteError WriteResult -> msg)
     | EndReply (Result WriteError ResponseResult -> msg)
     | UpgradeReply (UpgradeDecision -> msg)
-    | CloseReply (Result CloseError CloseReport -> msg)
+    | CloseReply Int (Result CloseError CloseReport -> msg)
 type RouteMode = Present | Absent | Ambiguous
 type alias Route msg = { generation : Int, owner : Int, mode : RouteMode, tagger : Maybe (Event -> msg) }
 type alias State msg = { next : Int, replies : Dict Int (Reply msg), routes : Dict Int (Route msg) }
@@ -418,7 +418,7 @@ dispatch router cmd state = case cmd of
     End (Writer writerId) tag -> let ( id, next ) = nextReply (EndReply tag) state in Elm.Kernel.HttpServer.end router id writerId TerminalFact |> Task.andThen (\_ -> Task.succeed next)
     Abort (Response responseId) reason -> Elm.Kernel.HttpServer.abort responseId (abortName reason) |> Task.andThen (\_ -> Task.succeed state)
     RejectUpgrade (Upgrade upgradeId) code tag -> let ( id, next ) = nextReply (UpgradeReply tag) state in Elm.Kernel.HttpServer.rejectUpgrade router id upgradeId code UnitFact |> Task.andThen (\_ -> Task.succeed next)
-    Close (Listener listenerId _) (ClosePlan timeout) tag -> let ( id, next ) = nextReply (CloseReply tag) state in Elm.Kernel.HttpServer.close router id listenerId timeout CloseFact |> Task.andThen (\_ -> Task.succeed next)
+    Close (Listener listenerId _) (ClosePlan timeout) tag -> let ( id, next ) = nextReply (CloseReply listenerId tag) state in Elm.Kernel.HttpServer.close router id listenerId timeout CloseFact |> Task.andThen (\_ -> Task.succeed next)
 
 onSelfMsg router fact state =
     case fact of
@@ -456,10 +456,7 @@ onSelfMsg router fact state =
             ) router
 
         CloseFact id kind completed rejected forced ->
-            claim id state (\reply -> case reply of
-                CloseReply tag -> Just (tag (if kind == "ok" then Ok { completed = completed, rejected = rejected, forced = forced } else Err (decodeCloseError kind)))
-                _ -> Nothing
-            ) router
+            claimClose id kind completed rejected forced state router
 
         IncomingFact listenerId generation raw ->
             case Dict.get listenerId state.routes of
@@ -475,6 +472,17 @@ onSelfMsg router fact state =
 
 rejectRaw raw state =
     Elm.Kernel.HttpServer.rejectStale raw.responseId raw.upgradeId |> Task.andThen (\_ -> Task.succeed state)
+
+claimClose id kind completed rejected forced state router =
+    case Dict.get id state.replies of
+        Just (CloseReply listenerId tag) ->
+            let
+                withoutReply = { state | replies = Dict.remove id state.replies }
+                next = if kind == "ok" then { withoutReply | routes = Dict.remove listenerId withoutReply.routes } else withoutReply
+                result = if kind == "ok" then Ok { completed = completed, rejected = rejected, forced = forced } else Err (decodeCloseError kind)
+            in
+            Platform.sendToApp router (tag result) |> Task.andThen (\_ -> Task.succeed next)
+        _ -> Task.succeed { state | replies = Dict.remove id state.replies }
 
 claim id state toMessage router =
     case Dict.get id state.replies of

@@ -4,7 +4,7 @@ import Elm.Kernel.List exposing (fromArray, toArray)
 import Elm.Kernel.Scheduler exposing (binding, succeed, rawSpawn)
 import Platform exposing (sendToSelf)
 */
-/* generated canonical-sha256 3fd978d1e546ac0bfd0ecb0d5c5af6c87237544c89e7bc80bdf6b6c640b851ba */
+/* generated canonical-sha256 2eec1e8e5cd2dd45c60bb724818b807eefaddb0d2b25461d1a66e99b3439c22c */
 "use strict";
 
 const http = require("node:http");
@@ -15,6 +15,24 @@ const EMPTY_BYTES = () => new DataView(new ArrayBuffer(0));
 const field = (value, name) => value[name] === undefined ? value["__$" + name] : value[name];
 const listArray = value => typeof __List_toArray === "function" ? __List_toArray(value) : value;
 const bytesBuffer = value => Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+
+class RouteRegistry {
+  constructor() { this.routes = new Map(); }
+  get(listenerId) { return this.routes.get(listenerId); }
+  reconcile(router, routes, makeIncoming) {
+    const seen = new Set();
+    for (const raw of routes) {
+      const listenerId = Array.isArray(raw) ? raw[0] : field(raw, "listenerId");
+      const generation = Array.isArray(raw) ? raw[1] : field(raw, "generation");
+      const present = Array.isArray(raw) ? raw[2] : field(raw, "present");
+      seen.add(listenerId);
+      this.routes.set(listenerId, { router, generation, present, makeIncoming });
+    }
+    for (const [listenerId, route] of this.routes) if (route.router === router && !seen.has(listenerId)) this.routes.delete(listenerId);
+  }
+  close(listenerId) { return this.routes.delete(listenerId); }
+  snapshot() { return this.routes.size; }
+}
 
 class Budget {
   constructor(hard = HARD) { this.hard = hard; this.next = 1; this.reservations = new Map(); this.counts = new Map(); }
@@ -263,8 +281,34 @@ class ServerRegistry {
   }
   takeUpgrade(id, release) { const offer = this.upgrades.get(id); if (!offer || offer.claimed) return null; offer.claimed = true; this.upgrades.delete(id); offer.listener.upgrades.delete(id); clearTimeout(offer.timer); if (release) { this.budget.release(offer.reserve); offer.reserve = 0; } return offer; }
   claimUpgrade(id) { return this.takeUpgrade(id, true); }
-  transferUpgrade(id) { return this.takeUpgrade(id, false); }
-  releaseTransferredUpgrade(offer) { if (!offer || !offer.reserve) return false; const reserve = offer.reserve; offer.reserve = 0; return this.budget.release(reserve); }
+  transferUpgrade(id) {
+    const offer = this.takeUpgrade(id, false);
+    if (!offer) return null;
+    offer.transferState = "pending";
+    offer.transferTimer = setTimeout(() => this.failTransferredUpgrade(offer), this.option(offer.listener.options, "upgradeTimeout"));
+    offer.socket.once("close", () => this.releaseTransferredUpgrade(offer));
+    return offer;
+  }
+  adoptTransferredUpgrade(offer) {
+    if (!offer || offer.transferState !== "pending") return false;
+    offer.transferState = "adopted";
+    clearTimeout(offer.transferTimer); offer.transferTimer = null;
+    return true;
+  }
+  failTransferredUpgrade(offer) {
+    if (!offer || offer.transferState !== "pending") return false;
+    offer.transferState = "failed";
+    clearTimeout(offer.transferTimer); offer.transferTimer = null;
+    this.releaseTransferredUpgrade(offer);
+    if (!offer.socket.destroyed) offer.socket.destroy();
+    return true;
+  }
+  releaseTransferredUpgrade(offer) {
+    if (!offer || !offer.reserve) return false;
+    clearTimeout(offer.transferTimer); offer.transferTimer = null;
+    const reserve = offer.reserve; offer.reserve = 0; offer.transferState = "released";
+    return this.budget.release(reserve);
+  }
   rejectUpgrade(router, operationId, id, code, makeFact) { const offer = this.claimUpgrade(id); if (offer) socketReject(offer.socket, code); if (makeFact) this.emit(router, makeFact(operationId, code === 504 ? "timeout" : "ok")); }
   rejectStale(responseId, upgradeId) { if (responseId) { const exchange = this.responses.get(responseId); if (exchange) { fixedReject(exchange.res, 503); this.cleanupExchange(exchange, true, "rejected"); } } if (upgradeId) this.rejectUpgrade(null, 0, upgradeId, 503, null); }
   close(router, operationId, listenerId, timeout, makeFact) {
@@ -303,12 +347,12 @@ var $schelmRegistry = new ServerRegistry({
     __Scheduler_rawSpawn(A2(__Platform_sendToSelf, router, A3(route.makeIncoming, listener.id, route.generation, $rawIncoming(raw))));
   }
 });
-var $schelmRoutes = new Map();
+var $schelmRoutes = new RouteRegistry();
 function $task(fn) { return __Scheduler_binding(function(done) { try { fn(); } finally { done(__Scheduler_succeed(_Utils_Tuple0)); } }); }
 function $rawOptions(o) { return { limits: { connections:o.__$limits.__$connections, exchanges:o.__$limits.__$exchanges, requestBytes:o.__$limits.__$requestBytes, responseBytes:o.__$limits.__$responseBytes, upgrades:o.__$limits.__$upgrades, closeWaiters:o.__$limits.__$closeWaiters, requestsPerSocket:o.__$limits.__$requestsPerSocket, headerPairs:o.__$limits.__$headerPairs }, headersTimeout:o.__$headersTimeout, requestTimeout:o.__$requestTimeout, decisionTimeout:o.__$decisionTimeout, bodyTimeout:o.__$bodyTimeout, writeTimeout:o.__$writeTimeout, finishTimeout:o.__$finishTimeout, keepAliveTimeout:o.__$keepAliveTimeout, upgradeTimeout:o.__$upgradeTimeout, gracefulTimeout:o.__$gracefulTimeout }; }
 function $rawRequest(r) { return { __$id:r.id, __$method_:r.method_, __$target_:r.target_, __$targetForm_:r.targetForm_, __$version:r.version, __$headers_:__List_fromArray(r.headers_.map(function(h){return {__$name:h.name,__$value:h.value};})), __$remote:r.remote, __$encrypted_:r.encrypted_ }; }
 function $rawIncoming(r) { return { __$kind:r.kind, __$request:$rawRequest(r.request), __$bodyId:r.bodyId, __$responseId:r.responseId, __$upgradeId:r.upgradeId, __$reason:r.reason }; }
-var _HttpServer_configureRoutes = F3(function(router,routes,makeIncoming){ return $task(function(){ var seen=new Set(); __List_toArray(routes).forEach(function(r){ var id=r.__$listenerId; seen.add(id); $schelmRoutes.set(id,{router:router,generation:r.__$generation,present:r.__$present,makeIncoming:makeIncoming}); }); for(var entry of $schelmRoutes){ if(entry[1].router===router && !seen.has(entry[0])) $schelmRoutes.delete(entry[0]); } }); });
+var _HttpServer_configureRoutes = F3(function(router,routes,makeIncoming){ return $task(function(){ $schelmRoutes.reconcile(router,__List_toArray(routes).map(function(r){ return [r.__$listenerId,r.__$generation,r.__$present]; }),makeIncoming); }); });
 var _HttpServer_listen = F6(function(router,op,host,port,options,makeFact){ return $task(function(){ $schelmRegistry.listen(router,op,host,port,$rawOptions(options),function(a,b,c,d,e){return A5(makeFact,a,b,c,d,e);}); }); });
 var _HttpServer_cancelListen = function(op){ return $task(function(){ $schelmRegistry.cancelListen(op); }); };
 var _HttpServer_readBody = F5(function(router,op,id,limit,makeFact){ return $task(function(){ $schelmRegistry.readBody(router,op,id,limit,function(a,b,c,d,e){return A5(makeFact,a,b,c,d,e);}); }); });
@@ -320,4 +364,4 @@ var _HttpServer_end = F4(function(router,op,id,makeFact){ return $task(function(
 var _HttpServer_abort = F2(function(id,reason){ return $task(function(){ $schelmRegistry.abort(id,reason); }); });
 var _HttpServer_rejectUpgrade = F5(function(router,op,id,code,makeFact){ return $task(function(){ $schelmRegistry.rejectUpgrade(router,op,id,code,function(a,b){return A2(makeFact,a,b);}); }); });
 var _HttpServer_rejectStale = F2(function(responseId,upgradeId){ return $task(function(){ $schelmRegistry.rejectStale(responseId,upgradeId); }); });
-var _HttpServer_close = F5(function(router,op,id,timeout,makeFact){ return $task(function(){ $schelmRegistry.close(router,op,id,timeout,function(a,b,c,d,e){return A5(makeFact,a,b,c,d,e);}); }); });
+var _HttpServer_close = F5(function(router,op,id,timeout,makeFact){ return $task(function(){ $schelmRegistry.close(router,op,id,timeout,function(a,b,c,d,e){ if(b === "ok") $schelmRoutes.close(id); return A5(makeFact,a,b,c,d,e); }); }); });

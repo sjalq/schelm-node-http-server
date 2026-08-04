@@ -9,6 +9,24 @@ const field = (value, name) => value[name] === undefined ? value["__$" + name] :
 const listArray = value => typeof __List_toArray === "function" ? __List_toArray(value) : value;
 const bytesBuffer = value => Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 
+class RouteRegistry {
+  constructor() { this.routes = new Map(); }
+  get(listenerId) { return this.routes.get(listenerId); }
+  reconcile(router, routes, makeIncoming) {
+    const seen = new Set();
+    for (const raw of routes) {
+      const listenerId = Array.isArray(raw) ? raw[0] : field(raw, "listenerId");
+      const generation = Array.isArray(raw) ? raw[1] : field(raw, "generation");
+      const present = Array.isArray(raw) ? raw[2] : field(raw, "present");
+      seen.add(listenerId);
+      this.routes.set(listenerId, { router, generation, present, makeIncoming });
+    }
+    for (const [listenerId, route] of this.routes) if (route.router === router && !seen.has(listenerId)) this.routes.delete(listenerId);
+  }
+  close(listenerId) { return this.routes.delete(listenerId); }
+  snapshot() { return this.routes.size; }
+}
+
 class Budget {
   constructor(hard = HARD) { this.hard = hard; this.next = 1; this.reservations = new Map(); this.counts = new Map(); }
   reserve(listenerId, klass, amount, listenerCap) {
@@ -256,8 +274,34 @@ class ServerRegistry {
   }
   takeUpgrade(id, release) { const offer = this.upgrades.get(id); if (!offer || offer.claimed) return null; offer.claimed = true; this.upgrades.delete(id); offer.listener.upgrades.delete(id); clearTimeout(offer.timer); if (release) { this.budget.release(offer.reserve); offer.reserve = 0; } return offer; }
   claimUpgrade(id) { return this.takeUpgrade(id, true); }
-  transferUpgrade(id) { return this.takeUpgrade(id, false); }
-  releaseTransferredUpgrade(offer) { if (!offer || !offer.reserve) return false; const reserve = offer.reserve; offer.reserve = 0; return this.budget.release(reserve); }
+  transferUpgrade(id) {
+    const offer = this.takeUpgrade(id, false);
+    if (!offer) return null;
+    offer.transferState = "pending";
+    offer.transferTimer = setTimeout(() => this.failTransferredUpgrade(offer), this.option(offer.listener.options, "upgradeTimeout"));
+    offer.socket.once("close", () => this.releaseTransferredUpgrade(offer));
+    return offer;
+  }
+  adoptTransferredUpgrade(offer) {
+    if (!offer || offer.transferState !== "pending") return false;
+    offer.transferState = "adopted";
+    clearTimeout(offer.transferTimer); offer.transferTimer = null;
+    return true;
+  }
+  failTransferredUpgrade(offer) {
+    if (!offer || offer.transferState !== "pending") return false;
+    offer.transferState = "failed";
+    clearTimeout(offer.transferTimer); offer.transferTimer = null;
+    this.releaseTransferredUpgrade(offer);
+    if (!offer.socket.destroyed) offer.socket.destroy();
+    return true;
+  }
+  releaseTransferredUpgrade(offer) {
+    if (!offer || !offer.reserve) return false;
+    clearTimeout(offer.transferTimer); offer.transferTimer = null;
+    const reserve = offer.reserve; offer.reserve = 0; offer.transferState = "released";
+    return this.budget.release(reserve);
+  }
   rejectUpgrade(router, operationId, id, code, makeFact) { const offer = this.claimUpgrade(id); if (offer) socketReject(offer.socket, code); if (makeFact) this.emit(router, makeFact(operationId, code === 504 ? "timeout" : "ok")); }
   rejectStale(responseId, upgradeId) { if (responseId) { const exchange = this.responses.get(responseId); if (exchange) { fixedReject(exchange.res, 503); this.cleanupExchange(exchange, true, "rejected"); } } if (upgradeId) this.rejectUpgrade(null, 0, upgradeId, 503, null); }
   close(router, operationId, listenerId, timeout, makeFact) {
@@ -279,4 +323,4 @@ class ServerRegistry {
   snapshot() { return { listeners: this.listeners.size, binds: this.binds.size, bodies: this.bodies.size, responses: this.responses.size, writers: this.writers.size, upgrades: this.upgrades.size, budget: this.budget.snapshot() }; }
 }
 
-module.exports = { Budget, ServerRegistry, classifyTarget, rawPairs, fixedReject, socketReject, HARD };
+module.exports = { RouteRegistry, Budget, ServerRegistry, classifyTarget, rawPairs, fixedReject, socketReject, HARD };

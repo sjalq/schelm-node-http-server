@@ -14,10 +14,10 @@ The listener owns network resources until `close` settles. Request bodies are
 pull-driven. A delivered chunk retains its byte reservation only until the next demand/discard or the bounded body deadline; expiry destroys the paused connection and releases ownership. Streaming writes retain one chunk and honor Node backpressure.
 `AcceptedByNode` means the response emitted `finish`; it does not mean the peer
 received or persisted bytes. Public binding requires an explicit acknowledgement.
-All limits and waiting states are bounded. Each effects wave admits at most 1024 commands and at most 4096 one-shot replies remain pending; excess commands receive typed overload results. See module docs for recovery errors.
+All limits and waiting states are bounded. Each effects wave admits at most 1024 commands and at most 4096 one-shot replies remain pending; excess commands receive typed overload results. Terminal listener close is the quiescent boundary that prunes its route generation tombstone; listener identities are never reused, so late facts remain stale without retaining sequential churn history. See module docs for recovery errors.
 
 WebSocket messages are deliberately not public API. A package-private,
-offline-pinned `ws` upgrade bridge exists for migration adapters only.
+offline-pinned `ws` upgrade bridge exists for migration adapters only. A transferred upgrade remains kernel-owned until the adapter synchronously adopts it; malformed/rejected transfers and transfers that never settle are destroyed and released exactly once.
 
 ## Guarantees and limits
 
