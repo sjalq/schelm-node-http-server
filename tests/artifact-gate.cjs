@@ -2,6 +2,8 @@
 const fs=require("node:fs"),path=require("node:path"),assert=require("node:assert/strict");
 const root=path.resolve(__dirname,"..");
 const files=["src/Elm/Kernel/HttpServer.js","build/server-debug.js","build/server-optimize.js"];
+const adapter=fs.readFileSync(path.join(root,"kernel-src/private-ws-adapter.js"),"utf8");
+assert.match(adapter,/WebSocketServer/);assert.match(adapter,/handleUpgrade/);assert.match(adapter,/vendor\/ws-8\.21\.1/);
 for(const relative of files){
   const source=fs.readFileSync(path.join(root,relative),"utf8");
   assert.doesNotMatch(source,/\/home\/|\/opt\/elm-harness|sourceMappingURL|fixtures\/feasibility|observationHook/);

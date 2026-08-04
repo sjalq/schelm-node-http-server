@@ -9,10 +9,10 @@ Date: 2025-08-06. Authority runtime: pinned Node 24.4.1.
    acknowledgement; recovery-oriented errors.
 2. **Production boundary:** one Elm effect manager owns app taggers and reply
    routing. The generated kernel stores primitive facts and Node resources only.
-   Reply entries are removed before delivery; subscription generations reject
-   stale or ambiguous unsolicited work.
-3. **Bounded ownership:** one reservation authority covers listeners,
-   connections, exchanges, copied body/write bytes, and upgrades. Bodies are
+   Reply entries are removed before delivery; stable numeric route owners distinguish replacement without function equality;
+   generations reject stale or ambiguous unsolicited work.
+3. **Bounded ownership:** one reservation authority enforces package-global hard caps and per-listener caps for listeners,
+   connections, exchanges, copied body/write bytes, and upgrades. Request-copy reservations remain live until the next body ownership command or terminal cleanup. Bodies are
    pull-driven, writes retain at most one chunk, and every waiting state ends by
    fact, deadline, or close.
 4. **Honest transport semantics:** HTTP/1.1 keep-alive is sequential;
@@ -31,7 +31,7 @@ Date: 2025-08-06. Authority runtime: pinned Node 24.4.1.
 - Bounded exhaustive model: 5,380,840 explored nodes, checked count and digest.
 - Real Node tests cover duplicate request headers, pull bodies, `finish`, actual
   backpressure/drain over 4 MiB, pipelining rejection, slow headers, absent and
-  timed-out decisions, exact non-empty upgrade `head`, and duplicate claim.
+  timed-out decisions, exact non-empty upgrade `head`, duplicate claim, invalid-send recovery, disjoint close accounting, and the production pinned adapter calling `handleUpgrade`.
 - Scale gate performs 10,000 indexed reserve/release operations across 200
   listeners with no retained reservations.
 - Artifact, deterministic archive, and provenance gates reject ambient `ws`,
@@ -58,7 +58,7 @@ pipelining. Those are explicit non-goals, not silent fallbacks.
 - **Big-O:** hot admission and release use indexed maps/sets. No history scan,
   request-body accumulation, response accumulation, or application queue.
 - **Errors/recovery:** invalid configuration fails before listen; runtime
-  exhaustion rejects boundedly; deadlines destroy unsafe resources; close can
+  exhaustion rejects boundedly; deadlines destroy unsafe resources; effect waves/replies reject through typed overload results; close can
   be retried/joined within a bounded waiter limit.
 - **Repository hygiene:** generated build/elm-stuff are ignored. No harness files
   or integration work are part of this branch.

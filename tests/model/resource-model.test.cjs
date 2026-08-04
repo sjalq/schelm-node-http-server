@@ -1,0 +1,5 @@
+"use strict";const test=require("node:test"),assert=require("node:assert/strict"),m=require("./resource-model.cjs");
+test("global reservation spans listener identities",()=>{let s=m.reserve(m.initial(),1,8);assert.equal(m.reserve(s,2,1).rejected,true);s=m.release(s,"completed");assert.equal(s.globalBytes,0)});
+test("stable route owner retains generation while replacement stales facts",()=>{let s=m.route(m.initial(),1,7),g=s.routes[1].generation;s=m.route(s,1,7);assert.equal(s.routes[1].generation,g);s=m.route(s,1,8);assert.equal(s.routes[1].generation,g+1)});
+test("waves and pending replies reject a typed bounded suffix",()=>{const s=m.admitWave(m.initial(),5000);assert.equal(s.pendingReplies,1024);assert.equal(s.overloaded,3976)});
+test("close lifecycle buckets are disjoint",()=>{for(const outcome of ["completed","rejected","forced"]){const s=m.release(m.reserve(m.initial(),1,1),outcome);assert.equal(Object.values(s.close).reduce((a,x)=>a+x,0),1);assert.equal(s.close[outcome],1)}});

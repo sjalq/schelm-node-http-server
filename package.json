@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "type": "commonjs",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "assemble": "node scripts/assemble-kernels.cjs",
     "check:assembly": "node scripts/assemble-kernels.cjs --check",
@@ -15,6 +17,8 @@
     "test:artifact": "node tests/artifact-gate.cjs",
     "test:archive": "node tests/archive-repro.cjs",
     "test:provenance": "node tests/provenance-gate.cjs",
-    "test": "npm run check:assembly && npm run build && npm run test:model && npm run test:node && npm run test:workers && npm run test:perf && npm run test:artifact && npm run test:archive && npm run test:provenance"
+    "test": "npm run check:assembly && npm run build && npm run test:feasibility && npm run test:model && npm run test:node && npm run test:workers && npm run test:perf && npm run test:artifact && npm run test:archive && npm run test:provenance && npm run test:release-archive",
+    "test:feasibility": "node fixtures/feasibility/scripts/run-m0c.cjs && node fixtures/feasibility/scripts/runtime-probes.cjs && node fixtures/feasibility/scripts/run.cjs",
+    "test:release-archive": "node tests/package-archive.cjs"
   }
 }

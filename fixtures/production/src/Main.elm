@@ -21,7 +21,7 @@ main = Platform.worker { init = \_ -> ( { listener = Nothing }, Server.listen Se
 
 subscriptions model =
     case model.listener of
-        Just listener -> Server.onEvents listener Http
+        Just listener -> Server.onEvents (Server.eventRoute listener 1) Http
         Nothing -> Sub.none
 
 update msg model =

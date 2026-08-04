@@ -37,6 +37,8 @@ effect module Schelm.Node.HttpServer where { command = MyCmd, subscription = MyS
     , listen
     , cancelListen
     , Event(..)
+    , EventRoute
+    , eventRoute
     , onEvents
     , Request
     , RequestId
@@ -110,13 +112,13 @@ peer delivery. Public exposure is explicit. Node host objects and raw upgrade
 sockets never cross this API.
 
 @docs Permission, initialize
-@docs Port, BindError, port, ephemeralPort, Bind, loopback, public, PublicAcknowledgement, acknowledgePublicExposure
+@docs Port, BindError, tcpPort, ephemeralPort, Bind, loopback, public, PublicAcknowledgement, acknowledgePublicExposure
 @docs Options, defaults, Limits, limits, LimitError, withLimits, withHeadersTimeout, withRequestTimeout, withDecisionTimeout, withBodyTimeout, withWriteTimeout, withFinishTimeout, withKeepAliveTimeout, withUpgradeTimeout, withGracefulTimeout
 @docs Operation, Listener, Endpoint, endpoint
 @docs ListenError, ListenErrorKind, listenErrorKind, listenErrorMessage, ListenCallbacks, listen, cancelListen
-@docs Event, onEvents, Request, RequestId, requestId, method, target, TargetForm, targetForm, httpVersion, Header, headerName, headerValue, headers, headerValues, remoteAddress, encrypted
+@docs Event, EventRoute, eventRoute, onEvents, Request, RequestId, requestId, method, target, TargetForm, targetForm, httpVersion, Header, headerName, headerValue, headers, headerValues, remoteAddress, encrypted
 @docs BodyReader, BodyLimit, bodyLimit, BodyEvent, BodyError, readBody, discardBody
-@docs Response, Status, StatusError, status, HeaderError, responseHeader, Body, emptyBody, utf8Body, bytesBody, ResponsePlan, respond, text, bytes, StreamingPlan, streaming, streaming, stream
+@docs Response, Status, StatusError, status, HeaderError, responseHeader, Body, emptyBody, utf8Body, bytesBody, ResponsePlan, respond, text, bytes, StreamingPlan, streaming, stream
 @docs Writer, WriteResult, WriteError, write, end
 @docs ResponseResult, AbortReason, abort
 @docs Upgrade, UpgradeDecision, rejectUpgrade
@@ -193,7 +195,7 @@ endpoint : Listener -> Endpoint
 endpoint (Listener _ value) = value
 
 type ListenError = ListenError ListenErrorKind
-type ListenErrorKind = AddressInUse | PermissionDenied | UnsupportedRuntime | ListenTimedOut | ListenFailed
+type ListenErrorKind = AddressInUse | PermissionDenied | UnsupportedRuntime | ListenTimedOut | ListenFailed | ListenManagerOverloaded
 type alias ListenCallbacks msg = { onStarted : Operation -> msg, onFinished : Operation -> Result ListenError Listener -> msg }
 listenErrorKind : ListenError -> ListenErrorKind
 listenErrorKind (ListenError kind) = kind
@@ -204,6 +206,7 @@ listenErrorMessage (ListenError kind) = case kind of
     UnsupportedRuntime -> "This Node runtime lacks a required bounded-server feature."
     ListenTimedOut -> "The listener did not start before its deadline."
     ListenFailed -> "The listener could not start."
+    ListenManagerOverloaded -> "The HTTP manager command budget is full; retry later."
 
 type RequestId = RequestId Int
 type Request = Request RawRequest
@@ -232,7 +235,7 @@ type BodyReader = BodyReader Int
 type BodyLimit = BodyLimit Int
 bodyLimit value = if value >= 1 && value <= 67108864 then Ok (BodyLimit value) else Err LimitOutOfRange
 type BodyEvent = BodyChunk BodyReader Bytes | BodyComplete (List Header) | BodyFailed BodyError
-type BodyError = BodyTooLarge | BodyTimedOut | ClientAborted | BodyAlreadyClaimed | BodyUnavailable
+type BodyError = BodyTooLarge | BodyTimedOut | ClientAborted | BodyAlreadyClaimed | BodyUnavailable | BodyManagerOverloaded
 
 type Response = Response Int
 type Status = Status Int
@@ -259,16 +262,16 @@ streaming (Status code) responseHeaders = StreamingPlan code responseHeaders
 
 type Writer = Writer Int
 type WriteResult = WriteAccepted | WriteDrained
-type WriteError = PeerClosed | WriteTimedOut | WriteAlreadyPending | WriterEnded | ResponseTooLarge | InvalidResponse
+type WriteError = PeerClosed | WriteTimedOut | WriteAlreadyPending | WriterEnded | ResponseTooLarge | InvalidResponse | WriteManagerOverloaded
 type ResponseResult = AcceptedByNode | ResponsePeerClosed | ResponseTimedOut
 type AbortReason = ClientClosed | ClientError | ApplicationAborted | DecisionTimedOut | ServerClosing
 type Upgrade = Upgrade Int
-type UpgradeDecision = UpgradeRejected | UpgradeTimedOut
+type UpgradeDecision = UpgradeRejected | UpgradeTimedOut | UpgradeManagerOverloaded
 type ClosePlan = ClosePlan Int
 graceful = ClosePlan 30000
 withCloseDeadline value _ = if value >= 1 && value <= 600000 then Ok (ClosePlan value) else Err LimitOutOfRange
 type alias CloseReport = { completed : Int, rejected : Int, forced : Int }
-type CloseError = UnknownListener | TooManyCloseWaiters | CloseFailed
+type CloseError = UnknownListener | TooManyCloseWaiters | CloseFailed | CloseManagerOverloaded
 
 type Event
     = RequestOffered Listener Request BodyReader Response
@@ -290,7 +293,11 @@ type MyCmd msg
     | RejectUpgrade Upgrade Int (UpgradeDecision -> msg)
     | Close Listener ClosePlan (Result CloseError CloseReport -> msg)
 
-type MySub msg = Events Listener (Event -> msg)
+type EventRoute = EventRoute Int Int
+eventRoute : Listener -> Int -> EventRoute
+eventRoute (Listener listenerId _) stableOwner = EventRoute listenerId stableOwner
+
+type MySub msg = Events EventRoute (Event -> msg)
 listen permission bind_ options callbacks = command (Listen permission bind_ options callbacks)
 cancelListen operation = command (CancelListen operation)
 readBody reader limit_ tagger = command (ReadBody reader limit_ tagger)
@@ -302,7 +309,7 @@ end writer tagger = command (End writer tagger)
 abort response reason = command (Abort response reason)
 rejectUpgrade upgrade code tagger = command (RejectUpgrade upgrade code tagger)
 close listener plan tagger = command (Close listener plan tagger)
-onEvents listener tagger = subscription (Events listener tagger)
+onEvents route tagger = subscription (Events route tagger)
 
 cmdMap f cmd = case cmd of
     Listen p b o c -> Listen p b o { onStarted = c.onStarted >> f, onFinished = \op result -> f (c.onFinished op result) }
@@ -316,7 +323,7 @@ cmdMap f cmd = case cmd of
     Abort r reason -> Abort r reason
     RejectUpgrade u code tag -> RejectUpgrade u code (tag >> f)
     Close l p tag -> Close l p (tag >> f)
-subMap f (Events listener tagger) = Events listener (tagger >> f)
+subMap f (Events route tagger) = Events route (tagger >> f)
 
 type Reply msg
     = ListenReply (Operation -> Result ListenError Listener -> msg)
@@ -329,7 +336,7 @@ type Reply msg
     | UpgradeReply (UpgradeDecision -> msg)
     | CloseReply (Result CloseError CloseReport -> msg)
 type RouteMode = Present | Absent | Ambiguous
-type alias Route msg = { generation : Int, mode : RouteMode, tagger : Maybe (Event -> msg) }
+type alias Route msg = { generation : Int, owner : Int, mode : RouteMode, tagger : Maybe (Event -> msg) }
 type alias State msg = { next : Int, replies : Dict Int (Reply msg), routes : Dict Int (Route msg) }
 type SelfMsg
     = ListenFact Int String Int String Int
@@ -352,28 +359,52 @@ onEffects router commands subscriptions state =
     Elm.Kernel.HttpServer.configureRoutes router routeFacts IncomingFact
         |> Task.andThen (\_ -> dispatchAll router commands routed)
 reconcile subscriptions state =
-    let grouped = List.foldl (\(Events (Listener id _) tagger) acc -> Dict.update id (\old -> Just (tagger :: Maybe.withDefault [] old)) acc) Dict.empty subscriptions
+    let grouped = List.foldl (\(Events (EventRoute id owner) tagger) acc -> Dict.update id (\old -> Just (( owner, tagger ) :: Maybe.withDefault [] old)) acc) Dict.empty subscriptions
         ids = Dict.union (Dict.map (\_ _ -> ()) state.routes) (Dict.map (\_ _ -> ()) grouped)
         one id _ acc =
             let
                 previous = Dict.get id state.routes
                 generation = previous |> Maybe.map .generation |> Maybe.withDefault 0
                 wasPresent = previous |> Maybe.map (\r -> r.mode == Present) |> Maybe.withDefault False
+                previousOwner = previous |> Maybe.map .owner |> Maybe.withDefault -1
             in
             case Dict.get id grouped of
-                Just [ tagger ] -> Dict.insert id { generation = if wasPresent then generation else generation + 1, mode = Present, tagger = Just tagger } acc
+                Just [ ( owner, tagger ) ] -> Dict.insert id { generation = if wasPresent && owner == previousOwner then generation else generation + 1, owner = owner, mode = Present, tagger = Just tagger } acc
                 Just (_ :: _ :: _) ->
                     let wasAmbiguous = previous |> Maybe.map (\r -> r.mode == Ambiguous) |> Maybe.withDefault False
-                    in Dict.insert id { generation = if wasAmbiguous then generation else generation + 1, mode = Ambiguous, tagger = Nothing } acc
+                    in Dict.insert id { generation = if wasAmbiguous then generation else generation + 1, owner = -1, mode = Ambiguous, tagger = Nothing } acc
                 _ ->
                     case previous of
                         Nothing -> acc
-                        Just route -> Dict.insert id { generation = if route.mode == Absent then generation else generation + 1, mode = Absent, tagger = Nothing } acc
+                        Just route -> Dict.insert id { generation = if route.mode == Absent then generation else generation + 1, owner = route.owner, mode = Absent, tagger = Nothing } acc
     in { state | routes = Dict.foldl one Dict.empty ids }
-dispatchAll router commands state =
+maxCommandsPerWave = 1024
+maxPendingReplies = 4096
+
+dispatchAll router commands state = dispatchWave router maxCommandsPerWave commands state
+
+dispatchWave router remaining commands state =
     case commands of
         [] -> Task.succeed state
-        first :: rest -> dispatch router first state |> Task.andThen (dispatchAll router rest)
+        first :: rest ->
+            if remaining <= 0 || Dict.size state.replies >= maxPendingReplies then
+                rejectOverloaded router first state |> Task.andThen (dispatchWave router 0 rest)
+            else
+                dispatch router first state |> Task.andThen (dispatchWave router (remaining - 1) rest)
+
+rejectOverloaded router cmd state =
+    case cmd of
+        Listen _ _ _ callbacks -> Platform.sendToApp router (callbacks.onFinished (Operation 0) (Err (ListenError ListenManagerOverloaded))) |> Task.andThen (\_ -> Task.succeed state)
+        ReadBody _ _ tag -> Platform.sendToApp router (tag (BodyFailed BodyManagerOverloaded)) |> Task.andThen (\_ -> Task.succeed state)
+        DiscardBody _ tag -> Platform.sendToApp router (tag (Err BodyManagerOverloaded)) |> Task.andThen (\_ -> Task.succeed state)
+        Send _ _ tag -> Platform.sendToApp router (tag (Err WriteManagerOverloaded)) |> Task.andThen (\_ -> Task.succeed state)
+        Stream _ _ tag -> Platform.sendToApp router (tag (Err WriteManagerOverloaded)) |> Task.andThen (\_ -> Task.succeed state)
+        Write _ _ tag -> Platform.sendToApp router (tag (Err WriteManagerOverloaded)) |> Task.andThen (\_ -> Task.succeed state)
+        End _ tag -> Platform.sendToApp router (tag (Err WriteManagerOverloaded)) |> Task.andThen (\_ -> Task.succeed state)
+        RejectUpgrade _ _ tag -> Platform.sendToApp router (tag UpgradeManagerOverloaded) |> Task.andThen (\_ -> Task.succeed state)
+        Close _ _ tag -> Platform.sendToApp router (tag (Err CloseManagerOverloaded)) |> Task.andThen (\_ -> Task.succeed state)
+        CancelListen _ -> Task.succeed state
+        Abort _ _ -> Task.succeed state
 
 nextReply reply state = let id = state.next in ( id, { state | next = id + 1, replies = Dict.insert id reply state.replies } )
 dispatch router cmd state = case cmd of
@@ -478,6 +509,7 @@ decodeBodyError kind =
         "timeout" -> BodyTimedOut
         "aborted" -> ClientAborted
         "claimed" -> BodyAlreadyClaimed
+        "overloaded" -> BodyManagerOverloaded
         _ -> BodyUnavailable
 
 decodeWrite kind =
@@ -493,6 +525,7 @@ decodeWriteError kind =
         "pending" -> WriteAlreadyPending
         "ended" -> WriterEnded
         "too-large" -> ResponseTooLarge
+        "overloaded" -> WriteManagerOverloaded
         _ -> InvalidResponse
 
 decodeTerminal kind =
@@ -506,6 +539,7 @@ decodeCloseError kind =
     case kind of
         "unknown" -> UnknownListener
         "waiters" -> TooManyCloseWaiters
+        "overloaded" -> CloseManagerOverloaded
         _ -> CloseFailed
 
 decodeIncoming listenerId raw =

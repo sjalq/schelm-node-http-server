@@ -4,7 +4,7 @@ import Elm.Kernel.List exposing (fromArray, toArray)
 import Elm.Kernel.Scheduler exposing (binding, succeed, rawSpawn)
 import Platform exposing (sendToSelf)
 */
-/* generated canonical-sha256 1affc77068eab181468f603ca9c3cf14a08ca1db2d11fe996b51d9de4ed7f186 */
+/* generated canonical-sha256 fb5611c6eee16cf5d8dbcbdc37e109489c6f9dc8ffe6a48550d568e9ccec5d87 */
 "use strict";
 
 const http = require("node:http");
@@ -17,26 +17,33 @@ const listArray = value => typeof __List_toArray === "function" ? __List_toArray
 const bytesBuffer = value => Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 
 class Budget {
-  constructor() { this.next = 1; this.reservations = new Map(); this.counts = new Map(); }
-  reserve(listenerId, klass, amount, cap) {
-    amount = amount || 1;
-    const key = listenerId + ":" + klass;
-    const used = this.counts.get(key) || 0;
-    if (amount < 0 || used + amount > cap) return 0;
+  constructor(hard = HARD) { this.hard = hard; this.next = 1; this.reservations = new Map(); this.counts = new Map(); }
+  reserve(listenerId, klass, amount, listenerCap) {
+    amount = amount === undefined ? 1 : amount;
+    const hardCap = this.hard[klass];
+    if (amount < 0 || hardCap === undefined) return 0;
+    const localKey = listenerId + ":" + klass, globalKey = "*:" + klass;
+    const keys = listenerId === 0 ? [globalKey] : [localKey, globalKey];
+    const localLimit = Math.min(listenerCap, hardCap);
+    if ((this.counts.get(globalKey) || 0) + amount > hardCap) return 0;
+    if (listenerId !== 0 && (this.counts.get(localKey) || 0) + amount > localLimit) return 0;
     const id = this.next++;
-    this.reservations.set(id, { listenerId, klass, amount, key });
-    this.counts.set(key, used + amount);
+    this.reservations.set(id, { listenerId, klass, amount, keys });
+    for (const key of keys) this.counts.set(key, (this.counts.get(key) || 0) + amount);
     return id;
   }
   release(id) {
     const found = this.reservations.get(id);
     if (!found) return false;
     this.reservations.delete(id);
-    const next = (this.counts.get(found.key) || 0) - found.amount;
-    if (next) this.counts.set(found.key, next); else this.counts.delete(found.key);
+    for (const key of found.keys) {
+      const next = (this.counts.get(key) || 0) - found.amount;
+      if (next) this.counts.set(key, next); else this.counts.delete(key);
+    }
     return true;
   }
   usage(listenerId, klass) { return this.counts.get(listenerId + ":" + klass) || 0; }
+  globalUsage(klass) { return this.counts.get("*:" + klass) || 0; }
   snapshot() { return { reservations: this.reservations.size, counts: Object.fromEntries(this.counts) }; }
 }
 
@@ -67,13 +74,13 @@ class ServerRegistry {
     this.hooks = hooks;
     this.nextListener = 1; this.nextRequest = 1; this.nextBody = 1; this.nextResponse = 1; this.nextWriter = 1; this.nextUpgrade = 1;
     this.listeners = new Map(); this.binds = new Map(); this.bodies = new Map(); this.responses = new Map(); this.writers = new Map(); this.upgrades = new Map();
-    this.budget = new Budget();
+    this.hard = hooks.hardLimits || HARD; this.budget = new Budget(this.hard);
   }
   emit(router, value) { if (this.hooks.emit) this.hooks.emit(router, value); }
   option(raw, name) { return Number(field(raw, name)); }
   limit(raw, name) { return Number(field(field(raw, "limits"), name)); }
   listen(router, operationId, host, port, rawOptions, makeFact) {
-    const listenerReserve = this.budget.reserve(0, "listeners", 1, HARD.listeners);
+    const listenerReserve = this.budget.reserve(0, "listeners", 1, this.hard.listeners);
     if (!listenerReserve) { this.emit(router, makeFact(operationId, "unsupported", 0, "", 0)); return; }
     const server = http.createServer({ insecureHTTPParser: false, requireHostHeader: true }, (req, res) => this.offerRequest(listenerId, req, res));
     const listenerId = this.nextListener++;
@@ -119,11 +126,13 @@ class ServerRegistry {
     const reserve = this.budget.reserve(listenerId, "connections", 1, this.limit(listener.options, "connections"));
     if (!reserve) { socket.destroy(); return; }
     socket.__schelmReserve = reserve; listener.sockets.add(socket);
-    socket.once("close", () => { listener.sockets.delete(socket); listener.activeBySocket.delete(socket); this.budget.release(reserve); this.maybeClosed(listener); });
+    socket.__schelmHeaderTimer = setTimeout(() => socket.destroy(), this.option(listener.options, "headersTimeout"));
+    socket.once("close", () => { clearTimeout(socket.__schelmHeaderTimer); listener.sockets.delete(socket); listener.activeBySocket.delete(socket); this.budget.release(reserve); this.maybeClosed(listener); });
   }
   offerRequest(listenerId, req, res) {
     const listener = this.listeners.get(listenerId);
     if (!listener || listener.closing) { fixedReject(res, 503); return; }
+    clearTimeout(req.socket.__schelmHeaderTimer); req.socket.__schelmHeaderTimer = null;
     if (listener.activeBySocket.has(req.socket)) { listener.rejected++; req.socket.__schelmPipelined = true; fixedReject(res, 429); return; }
     const reserve = this.budget.reserve(listenerId, "exchanges", 1, this.limit(listener.options, "exchanges"));
     if (!reserve) { listener.rejected++; fixedReject(res, 503); return; }
@@ -132,11 +141,11 @@ class ServerRegistry {
     const requestId = this.nextRequest++, bodyId = this.nextBody++, responseId = this.nextResponse++;
     const exchange = { requestId, bodyId, responseId, req, res, listener, reserve, bodyDone: false, responseDone: false, terminal: false, timer: null };
     listener.activeBySocket.set(req.socket, exchange); listener.exchanges.add(exchange); listener.accepted++;
-    const body = { id: bodyId, exchange, pending: false, ended: false, bytes: 0, limit: null, reserve: 0, timer: null };
+    const body = { id: bodyId, exchange, pending: false, ended: false, bytes: 0, limit: null, copyReserve: 0, timer: null };
     this.bodies.set(bodyId, body); this.responses.set(responseId, exchange);
     const rawRequest = { id: requestId, method_: String(req.method || ""), target_: String(req.url || ""), targetForm_: classifyTarget(req.method, req.url || ""), version: String(req.httpVersion), headers_: rawPairs(req.rawHeaders, this.limit(listener.options, "headerPairs")), remote: String(req.socket.remoteAddress || ""), encrypted_: !!req.socket.encrypted };
     const incoming = { kind: "request", request: rawRequest, bodyId, responseId, upgradeId: 0, reason: "" };
-    exchange.timer = setTimeout(() => { if (exchange.terminal || res.headersSent) return; listener.rejected++; fixedReject(res, 504); this.cleanupExchange(exchange, true); }, this.option(listener.options, "decisionTimeout"));
+    exchange.timer = setTimeout(() => { if (exchange.terminal || res.headersSent) return; fixedReject(res, 504); this.cleanupExchange(exchange, true, "rejected"); }, this.option(listener.options, "decisionTimeout"));
     req.once("aborted", () => this.abortExchange(exchange, "client-closed"));
     req.once("error", () => this.abortExchange(exchange, "client-error"));
     this.hooks.incoming && this.hooks.incoming(listener.router, listenerId, incoming, exchange);
@@ -145,6 +154,7 @@ class ServerRegistry {
     const body = this.bodies.get(bodyId);
     if (!body || body.ended) { this.emit(router, makeFact(operationId, "unavailable", bodyId, EMPTY_BYTES(), [])); return; }
     if (body.pending) { this.emit(router, makeFact(operationId, "claimed", bodyId, EMPTY_BYTES(), [])); return; }
+    if (body.copyReserve) { this.budget.release(body.copyReserve); body.copyReserve = 0; }
     body.pending = true; body.limit = body.limit === null ? limit : Math.min(body.limit, limit); const { req, listener } = body.exchange; let claimed = false;
     const done = (kind, bytes, trailers) => { if (claimed) return; claimed = true; body.pending = false; clearTimeout(body.timer); cleanup(); this.emit(router, makeFact(operationId, kind, bodyId, bytes || EMPTY_BYTES(), trailers || [])); };
     const cleanup = () => { req.removeListener("data", onData); req.removeListener("end", onEnd); req.removeListener("error", onError); req.removeListener("aborted", onAbort); };
@@ -153,7 +163,7 @@ class ServerRegistry {
       if (body.bytes + size > body.limit || body.bytes + size > this.limit(listener.options, "requestBytes")) { done("too-large"); this.cleanupExchange(body.exchange, true); return; }
       const reserve = this.budget.reserve(listener.id, "requestBytes", size, this.limit(listener.options, "requestBytes"));
       if (!reserve) { done("too-large"); this.cleanupExchange(body.exchange, true); return; }
-      const copy = Buffer.from(chunk); this.budget.release(reserve); body.bytes += size; done("chunk", new DataView(copy.buffer, copy.byteOffset, copy.byteLength));
+      const copy = Buffer.from(chunk); body.copyReserve = reserve; body.bytes += size; done("chunk", new DataView(copy.buffer, copy.byteOffset, copy.byteLength));
     };
     const onEnd = () => { body.ended = true; this.bodies.delete(bodyId); body.exchange.bodyDone = true; done("complete", EMPTY_BYTES(), rawPairs(req.rawTrailers || [], this.limit(listener.options, "headerPairs"))); this.maybeExchangeDone(body.exchange); };
     const onError = () => done("aborted"); const onAbort = () => done("aborted");
@@ -163,6 +173,7 @@ class ServerRegistry {
   discardBody(router, operationId, bodyId, makeFact) {
     const body = this.bodies.get(bodyId); if (!body) { this.emit(router, makeFact(operationId, "unavailable")); return; }
     if (body.pending) { this.emit(router, makeFact(operationId, "claimed")); return; }
+    if (body.copyReserve) { this.budget.release(body.copyReserve); body.copyReserve = 0; }
     body.pending = true;
     const limit = this.limit(body.exchange.listener.options, "requestBytes"); let bytes = 0, settled = false;
     const finish = kind => { if (settled) return; settled = true; body.pending = false; clearTimeout(timer); cleanup(); this.emit(router, makeFact(operationId, kind)); };
@@ -187,11 +198,11 @@ class ServerRegistry {
   }
   send(router, operationId, responseId, code, headers, bytes, makeFact) {
     const exchange = this.responses.get(responseId); if (!exchange) { this.emit(router, makeFact(operationId, "ended")); return; }
-    clearTimeout(exchange.timer); const body = bytesBuffer(bytes); exchange.__hasBody = body.length > 0;
+    const body = bytesBuffer(bytes); exchange.__hasBody = body.length > 0;
     if (body.length > this.limit(exchange.listener.options, "responseBytes")) { this.emit(router, makeFact(operationId, "too-large")); return; }
-    if (!this.applyHead(exchange, code, headers)) { this.emit(router, makeFact(operationId, "invalid")); return; }
     const reserve = this.budget.reserve(exchange.listener.id, "responseBytes", body.length, this.limit(exchange.listener.options, "responseBytes")); if (!reserve) { this.emit(router, makeFact(operationId, "too-large")); return; }
-    this.terminal(exchange, router, operationId, makeFact, this.option(exchange.listener.options, "finishTimeout"));
+    if (!this.applyHead(exchange, code, headers)) { this.budget.release(reserve); this.emit(router, makeFact(operationId, "invalid")); return; }
+    clearTimeout(exchange.timer); this.terminal(exchange, router, operationId, makeFact, this.option(exchange.listener.options, "finishTimeout"));
     try { exchange.res.end(body, () => this.budget.release(reserve)); } catch (_) { this.budget.release(reserve); exchange.res.destroy(); }
   }
   stream(router, operationId, responseId, code, headers, makeFact) {
@@ -219,14 +230,16 @@ class ServerRegistry {
     writer.ended = true; this.writers.delete(writerId); this.terminal(writer.exchange, router, operationId, makeFact, this.option(writer.exchange.listener.options, "finishTimeout")); writer.exchange.res.end();
   }
   abort(responseId) { const exchange = this.responses.get(responseId); if (exchange) this.cleanupExchange(exchange, true); }
-  abortExchange(exchange, reason) { if (exchange.terminal) return; if (this.hooks.aborted) this.hooks.aborted(exchange.listener.router, exchange, reason); this.cleanupExchange(exchange, true); }
+  abortExchange(exchange, reason) { if (exchange.terminal) return; if (this.hooks.aborted) this.hooks.aborted(exchange.listener.router, exchange, reason); this.cleanupExchange(exchange, true, "rejected"); }
   maybeExchangeDone(exchange) { if (exchange.bodyDone && exchange.responseDone) this.cleanupExchange(exchange, !!exchange.req.socket.__schelmPipelined); }
-  cleanupExchange(exchange, destroy) {
+  cleanupExchange(exchange, destroy, outcome = "completed") {
     if (exchange.terminal) return; exchange.terminal = true; clearTimeout(exchange.timer);
+    const body = this.bodies.get(exchange.bodyId); if (body && body.copyReserve) this.budget.release(body.copyReserve);
     this.bodies.delete(exchange.bodyId); this.responses.delete(exchange.responseId); exchange.listener.exchanges.delete(exchange); exchange.listener.activeBySocket.delete(exchange.req.socket); this.budget.release(exchange.reserve);
     for (const [id, writer] of this.writers) if (writer.exchange === exchange) this.writers.delete(id);
     if (destroy) try { exchange.req.socket.destroy(); } catch (_) {}
-    exchange.listener.completed++; this.maybeClosed(exchange.listener);
+    else if (!exchange.req.socket.destroyed) exchange.req.socket.__schelmHeaderTimer = setTimeout(() => exchange.req.socket.destroy(), this.option(exchange.listener.options, "headersTimeout"));
+    exchange.listener[outcome]++; this.maybeClosed(exchange.listener);
   }
   offerUpgrade(listenerId, req, socket, head) {
     const listener = this.listeners.get(listenerId); if (!listener || listener.closing) { socketReject(socket, 503); return; }
@@ -237,9 +250,12 @@ class ServerRegistry {
     const rawRequest = { id: this.nextRequest++, method_: String(req.method || ""), target_: String(req.url || ""), targetForm_: classifyTarget(req.method, req.url || ""), version: String(req.httpVersion), headers_: rawPairs(req.rawHeaders, this.limit(listener.options, "headerPairs")), remote: String(socket.remoteAddress || ""), encrypted_: !!socket.encrypted };
     this.hooks.incoming && this.hooks.incoming(listener.router, listenerId, { kind: "upgrade", request: rawRequest, bodyId: 0, responseId: 0, upgradeId: id, reason: "" }, offer);
   }
-  claimUpgrade(id) { const offer = this.upgrades.get(id); if (!offer || offer.claimed) return null; offer.claimed = true; this.upgrades.delete(id); offer.listener.upgrades.delete(id); clearTimeout(offer.timer); this.budget.release(offer.reserve); return offer; }
+  takeUpgrade(id, release) { const offer = this.upgrades.get(id); if (!offer || offer.claimed) return null; offer.claimed = true; this.upgrades.delete(id); offer.listener.upgrades.delete(id); clearTimeout(offer.timer); if (release) { this.budget.release(offer.reserve); offer.reserve = 0; } return offer; }
+  claimUpgrade(id) { return this.takeUpgrade(id, true); }
+  transferUpgrade(id) { return this.takeUpgrade(id, false); }
+  releaseTransferredUpgrade(offer) { if (!offer || !offer.reserve) return false; const reserve = offer.reserve; offer.reserve = 0; return this.budget.release(reserve); }
   rejectUpgrade(router, operationId, id, code, makeFact) { const offer = this.claimUpgrade(id); if (offer) socketReject(offer.socket, code); if (makeFact) this.emit(router, makeFact(operationId, code === 504 ? "timeout" : "ok")); }
-  rejectStale(responseId, upgradeId) { if (responseId) { const exchange = this.responses.get(responseId); if (exchange) { fixedReject(exchange.res, 503); this.cleanupExchange(exchange, true); } } if (upgradeId) this.rejectUpgrade(null, 0, upgradeId, 503, null); }
+  rejectStale(responseId, upgradeId) { if (responseId) { const exchange = this.responses.get(responseId); if (exchange) { fixedReject(exchange.res, 503); this.cleanupExchange(exchange, true, "rejected"); } } if (upgradeId) this.rejectUpgrade(null, 0, upgradeId, 503, null); }
   close(router, operationId, listenerId, timeout, makeFact) {
     const listener = this.listeners.get(listenerId); if (!listener) { this.emit(router, makeFact(operationId, "unknown", 0, 0, 0)); return; }
     if (listener.closing) { if (listener.closing.waiters.length >= this.limit(listener.options, "closeWaiters")) this.emit(router, makeFact(operationId, "waiters", 0, 0, 0)); else listener.closing.waiters.push({ router, operationId, makeFact }); return; }
@@ -247,7 +263,7 @@ class ServerRegistry {
     for (const id of Array.from(listener.upgrades)) this.rejectUpgrade(null, 0, id, 503, null);
     listener.server.close(() => { listener.closing.serverDone = true; this.maybeClosed(listener); });
     if (typeof listener.server.closeIdleConnections === "function") listener.server.closeIdleConnections();
-    listener.closing.timer = setTimeout(() => { for (const exchange of Array.from(listener.exchanges)) { listener.forced++; this.cleanupExchange(exchange, true); } for (const socket of listener.sockets) { listener.forced++; socket.destroy(); } listener.closing.serverDone = true; this.maybeClosed(listener); }, timeout);
+    listener.closing.timer = setTimeout(() => { for (const exchange of Array.from(listener.exchanges)) this.cleanupExchange(exchange, true, "forced"); for (const socket of listener.sockets) socket.destroy(); listener.closing.serverDone = true; this.maybeClosed(listener); }, timeout);
     this.maybeClosed(listener);
   }
   maybeClosed(listener) {
