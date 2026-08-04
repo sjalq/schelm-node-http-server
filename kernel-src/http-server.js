@@ -155,8 +155,10 @@ class ServerRegistry {
   }
   discardBody(router, operationId, bodyId, makeFact) {
     const body = this.bodies.get(bodyId); if (!body) { this.emit(router, makeFact(operationId, "unavailable")); return; }
+    if (body.pending) { this.emit(router, makeFact(operationId, "claimed")); return; }
+    body.pending = true;
     const limit = this.limit(body.exchange.listener.options, "requestBytes"); let bytes = 0, settled = false;
-    const finish = kind => { if (settled) return; settled = true; clearTimeout(timer); cleanup(); this.emit(router, makeFact(operationId, kind)); };
+    const finish = kind => { if (settled) return; settled = true; body.pending = false; clearTimeout(timer); cleanup(); this.emit(router, makeFact(operationId, kind)); };
     const cleanup = () => { body.exchange.req.removeListener("data", data); body.exchange.req.removeListener("end", end); body.exchange.req.removeListener("aborted", abort); };
     const data = chunk => { bytes += chunk.byteLength; if (bytes > limit) { finish("too-large"); this.cleanupExchange(body.exchange, true); } };
     const end = () => { body.ended = true; this.bodies.delete(bodyId); body.exchange.bodyDone = true; finish("ok"); this.maybeExchangeDone(body.exchange); };
@@ -186,19 +188,21 @@ class ServerRegistry {
   }
   stream(router, operationId, responseId, code, headers, makeFact) {
     const exchange = this.responses.get(responseId); if (!exchange || !this.applyHead(exchange, code, headers)) { this.emit(router, makeFact(operationId, "invalid", 0)); return; }
-    clearTimeout(exchange.timer); const writerId = this.nextWriter++; this.writers.set(writerId, { id: writerId, exchange, pending: false, ended: false }); this.emit(router, makeFact(operationId, "ok", writerId));
+    clearTimeout(exchange.timer); const writerId = this.nextWriter++; this.writers.set(writerId, { id: writerId, exchange, pending: false, ended: false, bytes: 0 }); this.emit(router, makeFact(operationId, "ok", writerId));
   }
   write(router, operationId, writerId, bytes, makeFact) {
     const writer = this.writers.get(writerId); if (!writer || writer.ended) { this.emit(router, makeFact(operationId, "ended")); return; }
     if (writer.pending) { this.emit(router, makeFact(operationId, "pending")); return; }
     const body = bytesBuffer(bytes), limit = this.limit(writer.exchange.listener.options, "responseBytes");
+    if (writer.bytes + body.length > limit) { this.emit(router, makeFact(operationId, "too-large")); return; }
     const reserve = this.budget.reserve(writer.exchange.listener.id, "responseBytes", body.length, limit); if (!reserve) { this.emit(router, makeFact(operationId, "too-large")); return; }
+    writer.bytes += body.length;
     writer.pending = true; let settled = false;
-    const settle = kind => { if (settled) return; settled = true; writer.pending = false; clearTimeout(timer); cleanup(); this.budget.release(reserve); this.emit(router, makeFact(operationId, kind)); };
+    const settle = kind => { if (settled) return; settled = true; writer.pending = false; clearTimeout(timer); cleanup(); this.budget.release(reserve); if (kind !== "accepted" && kind !== "drained") writer.exchange.res.destroy(); this.emit(router, makeFact(operationId, kind)); };
     const cleanup = () => { writer.exchange.res.removeListener("drain", drain); writer.exchange.res.removeListener("close", close); writer.exchange.res.removeListener("error", close); };
     const drain = () => settle("drained"), close = () => settle("peer-closed");
     writer.exchange.res.once("close", close); writer.exchange.res.once("error", close);
-    const timer = setTimeout(() => { settle("timeout"); writer.exchange.res.destroy(); }, this.option(writer.exchange.listener.options, "writeTimeout"));
+    const timer = setTimeout(() => settle("timeout"), this.option(writer.exchange.listener.options, "writeTimeout"));
     try { const accepted = writer.exchange.res.write(body); if (accepted) settle("accepted"); else writer.exchange.res.once("drain", drain); } catch (_) { settle("peer-closed"); }
   }
   end(router, operationId, writerId, makeFact) {

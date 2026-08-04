@@ -2,6 +2,7 @@
   "name": "ws",
   "version": "8.21.1",
   "license": "MIT",
+  "licenseSha256": "2b29dcfe0d6471f7e8c92c5fb38c9f93edee10330937055440192f1832b1ecef",
   "source": "offline deterministic archive of harness package-lock resolved node_modules/ws",
   "archive": "ws-8.21.1.tgz",
   "sha256": "dce47885abd6d7a46828883efd65d196d6f1538474284b010fd2eecf7d2885bd",
