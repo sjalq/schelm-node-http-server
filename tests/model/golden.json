@@ -1,0 +1,12 @@
+{
+  "summary": {
+    "count": 5380840,
+    "terminals": {
+      "peer-closed": 640164,
+      "timeout": 640164,
+      "aborted": 640164,
+      "finish": 85731
+    }
+  },
+  "digest": "f0be224439fbcb840a37bd97fb0b3595aa8373a1326156588045fb6c34599a79"
+}
