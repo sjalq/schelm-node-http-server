@@ -8,6 +8,23 @@ const EMPTY_BYTES = () => new DataView(new ArrayBuffer(0));
 const field = (value, name) => value[name] === undefined ? value["__$" + name] : value[name];
 const listArray = value => typeof __List_toArray === "function" ? __List_toArray(value) : value;
 const bytesBuffer = value => Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
+
+class SafeIds {
+  constructor(names = ["default"]) { this.next = new Map(names.map(name => [name, 1])); }
+  canAllocate(names) { return names.every(name => Number.isSafeInteger(this.next.get(name)) && this.next.get(name) > 0); }
+  allocate(names) {
+    if (!this.canAllocate(names)) return null;
+    const ids = names.map(name => this.next.get(name));
+    names.forEach((name, index) => this.next.set(name, ids[index] === MAX_SAFE_ID ? null : ids[index] + 1));
+    return ids;
+  }
+  setNext(name, value) {
+    if (value !== null && (!Number.isSafeInteger(value) || value < 1)) throw new RangeError("identity must be a positive safe integer or null");
+    this.next.set(name, value);
+  }
+  peek(name) { return this.next.get(name); }
+}
 
 class RouteRegistry {
   constructor() { this.routes = new Map(); }
@@ -28,7 +45,10 @@ class RouteRegistry {
 }
 
 class Budget {
-  constructor(hard = HARD) { this.hard = hard; this.next = 1; this.reservations = new Map(); this.counts = new Map(); }
+  constructor(hard = HARD) {
+    this.hard = hard; this.ids = new SafeIds(); this.reservations = new Map(); this.counts = new Map();
+    Object.defineProperty(this, "next", { get: () => this.ids.peek("default"), set: value => this.ids.setNext("default", value) });
+  }
   reserve(listenerId, klass, amount, listenerCap) {
     amount = amount === undefined ? 1 : amount;
     const hardCap = this.hard[klass];
@@ -38,7 +58,9 @@ class Budget {
     const localLimit = Math.min(listenerCap, hardCap);
     if ((this.counts.get(globalKey) || 0) + amount > hardCap) return 0;
     if (listenerId !== 0 && (this.counts.get(localKey) || 0) + amount > localLimit) return 0;
-    const id = this.next++;
+    const allocated = this.ids.allocate(["default"]);
+    if (!allocated) return 0;
+    const id = allocated[0];
     this.reservations.set(id, { listenerId, klass, amount, keys });
     for (const key of keys) this.counts.set(key, (this.counts.get(key) || 0) + amount);
     return id;
@@ -83,7 +105,11 @@ function socketReject(socket, code) {
 class ServerRegistry {
   constructor(hooks = {}) {
     this.hooks = hooks;
-    this.nextListener = 1; this.nextRequest = 1; this.nextBody = 1; this.nextResponse = 1; this.nextWriter = 1; this.nextUpgrade = 1;
+    this.ids = new SafeIds(["listener", "request", "body", "response", "writer", "upgrade"]);
+    for (const name of ["listener", "request", "body", "response", "writer", "upgrade"]) {
+      const property = "next" + name[0].toUpperCase() + name.slice(1);
+      Object.defineProperty(this, property, { get: () => this.ids.peek(name), set: value => this.ids.setNext(name, value) });
+    }
     this.listeners = new Map(); this.binds = new Map(); this.bodies = new Map(); this.responses = new Map(); this.writers = new Map(); this.upgrades = new Map();
     this.hard = hooks.hardLimits || HARD; this.budget = new Budget(this.hard);
   }
@@ -91,10 +117,11 @@ class ServerRegistry {
   option(raw, name) { return Number(field(raw, name)); }
   limit(raw, name) { return Number(field(field(raw, "limits"), name)); }
   listen(router, operationId, host, port, rawOptions, makeFact) {
+    if (!this.ids.canAllocate(["listener"])) { this.emit(router, makeFact(operationId, "unsupported", 0, "", 0)); return; }
     const listenerReserve = this.budget.reserve(0, "listeners", 1, this.hard.listeners);
     if (!listenerReserve) { this.emit(router, makeFact(operationId, "unsupported", 0, "", 0)); return; }
+    const listenerId = this.ids.allocate(["listener"])[0];
     const server = http.createServer({ insecureHTTPParser: false, requireHostHeader: true }, (req, res) => this.offerRequest(listenerId, req, res));
-    const listenerId = this.nextListener++;
     const bind = { operationId, listenerId, server, reserve: listenerReserve, claimed: false, router, makeFact, timer: null };
     this.binds.set(operationId, bind);
     const fail = error => {
@@ -145,11 +172,13 @@ class ServerRegistry {
     if (!listener || listener.closing) { fixedReject(res, 503); return; }
     clearTimeout(req.socket.__schelmHeaderTimer); req.socket.__schelmHeaderTimer = null;
     if (listener.activeBySocket.has(req.socket)) { listener.rejected++; req.socket.__schelmPipelined = true; fixedReject(res, 429); return; }
+    const identityNames = ["request", "body", "response"];
+    if (!this.ids.canAllocate(identityNames)) { listener.rejected++; fixedReject(res, 503); return; }
     const reserve = this.budget.reserve(listenerId, "exchanges", 1, this.limit(listener.options, "exchanges"));
     if (!reserve) { listener.rejected++; fixedReject(res, 503); return; }
     if (req.method === "CONNECT" || req.headers.expect || req.rawHeaders.length / 2 > this.limit(listener.options, "headerPairs")) { this.budget.release(reserve); listener.rejected++; fixedReject(res, req.headers.expect ? 417 : 405); return; }
     req.pause();
-    const requestId = this.nextRequest++, bodyId = this.nextBody++, responseId = this.nextResponse++;
+    const [requestId, bodyId, responseId] = this.ids.allocate(identityNames);
     const exchange = { requestId, bodyId, responseId, req, res, listener, reserve, bodyDone: false, responseDone: false, terminal: false, timer: null };
     listener.activeBySocket.set(req.socket, exchange); listener.exchanges.add(exchange); listener.accepted++;
     const body = { id: bodyId, exchange, pending: false, ended: false, bytes: 0, limit: null, copyReserve: 0, timer: null };
@@ -228,8 +257,10 @@ class ServerRegistry {
     try { exchange.res.end(body, () => this.budget.release(reserve)); } catch (_) { this.budget.release(reserve); exchange.res.destroy(); }
   }
   stream(router, operationId, responseId, code, headers, makeFact) {
-    const exchange = this.responses.get(responseId); if (!exchange || !this.applyHead(exchange, code, headers)) { this.emit(router, makeFact(operationId, "invalid", 0)); return; }
-    clearTimeout(exchange.timer); const writerId = this.nextWriter++; this.writers.set(writerId, { id: writerId, exchange, pending: false, ended: false, bytes: 0, bodyAllowed: code !== 204 && code !== 304 && exchange.req.method !== "HEAD" }); this.emit(router, makeFact(operationId, "ok", writerId));
+    const exchange = this.responses.get(responseId);
+    if (!exchange || !this.ids.canAllocate(["writer"]) || !this.applyHead(exchange, code, headers)) { this.emit(router, makeFact(operationId, "invalid", 0)); return; }
+    const writerId = this.ids.allocate(["writer"])[0];
+    clearTimeout(exchange.timer); this.writers.set(writerId, { id: writerId, exchange, pending: false, ended: false, bytes: 0, bodyAllowed: code !== 204 && code !== 304 && exchange.req.method !== "HEAD" }); this.emit(router, makeFact(operationId, "ok", writerId));
   }
   write(router, operationId, writerId, bytes, makeFact) {
     const writer = this.writers.get(writerId); if (!writer || writer.ended) { this.emit(router, makeFact(operationId, "ended")); return; }
@@ -265,11 +296,13 @@ class ServerRegistry {
   }
   offerUpgrade(listenerId, req, socket, head) {
     const listener = this.listeners.get(listenerId); if (!listener || listener.closing) { socketReject(socket, 503); return; }
+    const identityNames = ["upgrade", "request"];
+    if (!this.ids.canAllocate(identityNames)) { socketReject(socket, 503); return; }
     const reserve = this.budget.reserve(listenerId, "upgrades", 1, this.limit(listener.options, "upgrades")); if (!reserve) { socketReject(socket, 503); return; }
-    const id = this.nextUpgrade++; const offer = { id, listener, req, socket, head: Buffer.from(head), reserve, timer: null, claimed: false };
+    const [id, requestId] = this.ids.allocate(identityNames); const offer = { id, listener, req, socket, head: Buffer.from(head), reserve, timer: null, claimed: false };
     this.upgrades.set(id, offer); listener.upgrades.add(id);
     offer.timer = setTimeout(() => this.rejectUpgrade(null, 0, id, 504, null), this.option(listener.options, "upgradeTimeout"));
-    const rawRequest = { id: this.nextRequest++, method_: String(req.method || ""), target_: String(req.url || ""), targetForm_: classifyTarget(req.method, req.url || ""), version: String(req.httpVersion), headers_: rawPairs(req.rawHeaders, this.limit(listener.options, "headerPairs")), remote: String(socket.remoteAddress || ""), encrypted_: !!socket.encrypted };
+    const rawRequest = { id: requestId, method_: String(req.method || ""), target_: String(req.url || ""), targetForm_: classifyTarget(req.method, req.url || ""), version: String(req.httpVersion), headers_: rawPairs(req.rawHeaders, this.limit(listener.options, "headerPairs")), remote: String(socket.remoteAddress || ""), encrypted_: !!socket.encrypted };
     this.hooks.incoming && this.hooks.incoming(listener.router, listenerId, { kind: "upgrade", request: rawRequest, bodyId: 0, responseId: 0, upgradeId: id, reason: "" }, offer);
   }
   takeUpgrade(id, release) { const offer = this.upgrades.get(id); if (!offer || offer.claimed) return null; offer.claimed = true; this.upgrades.delete(id); offer.listener.upgrades.delete(id); clearTimeout(offer.timer); if (release) { this.budget.release(offer.reserve); offer.reserve = 0; } return offer; }
@@ -323,4 +356,4 @@ class ServerRegistry {
   snapshot() { return { listeners: this.listeners.size, binds: this.binds.size, bodies: this.bodies.size, responses: this.responses.size, writers: this.writers.size, upgrades: this.upgrades.size, budget: this.budget.snapshot() }; }
 }
 
-module.exports = { RouteRegistry, Budget, ServerRegistry, classifyTarget, rawPairs, fixedReject, socketReject, HARD };
+module.exports = { SafeIds, RouteRegistry, Budget, ServerRegistry, classifyTarget, rawPairs, fixedReject, socketReject, HARD, MAX_SAFE_ID };

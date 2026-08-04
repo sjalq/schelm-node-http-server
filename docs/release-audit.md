@@ -10,7 +10,7 @@ Date: 2025-08-06. Authority runtime: pinned Node 24.4.1.
 2. **Production boundary:** one Elm effect manager owns app taggers and reply
    routing. The generated kernel stores primitive facts and Node resources only.
    Reply entries are removed before delivery; stable numeric route owners distinguish replacement without function equality;
-   generations reject stale or ambiguous unsolicited work.
+   generations reject stale or ambiguous unsolicited work. All numeric identities cross Elm/JS as safe integers only: a single checked kernel allocator grants `Number.MAX_SAFE_INTEGER` once, then becomes terminal without wrapping, reuse, reservation, or side effects; the Elm manager mirrors that bound with an explicit `9007199254740991` terminal `Maybe Int`.
 3. **Bounded ownership:** one reservation authority enforces package-global hard caps and per-listener caps for listeners,
    connections, exchanges, copied body/write bytes, and upgrades. Body registration arms an ownership deadline while the request is initially paused; demand/discard replace it with their bounded operation deadline, and chunk delivery rearms it. Sending response headers never removes this body terminal path. If the application sends a response but never demands/discards, expiry destroys the paused socket, removes the exchange, and releases reservations deterministically. Bodies are
    pull-driven, writes retain at most one chunk, and every waiting state ends by
@@ -32,6 +32,7 @@ Date: 2025-08-06. Authority runtime: pinned Node 24.4.1.
 - Real Node tests cover duplicate request headers, pull bodies, `finish`, actual
   backpressure/drain over 4 MiB, pipelining rejection, slow headers, absent and
   timed-out decisions, exact non-empty upgrade `head`, duplicate claim, invalid-send recovery, disjoint close accounting, initial and delivered-copy body abandonment in real Node, initial abandonment in production debug/opt workers, and the production pinned adapter calling `handleUpgrade`.
+- Near-boundary injection covers budget, listener, request/body/response, writer, upgrade/request, and Elm manager identities. It proves the final safe identity succeeds exactly once, the next allocation rejects, compound allocations are atomic, and counters/maps/reservations/replies do not change on exhaustion in model/kernel, real Node, and debug/optimized production builds.
 - Scale gate performs 10,000 indexed reserve/release operations across 200
   listeners with no retained reservations.
 - Artifact, deterministic archive, and provenance gates reject ambient `ws`,

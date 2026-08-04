@@ -337,7 +337,7 @@ type Reply msg
     | CloseReply Int (Result CloseError CloseReport -> msg)
 type RouteMode = Present | Absent | Ambiguous
 type alias Route msg = { generation : Int, owner : Int, mode : RouteMode, tagger : Maybe (Event -> msg) }
-type alias State msg = { next : Int, replies : Dict Int (Reply msg), routes : Dict Int (Route msg) }
+type alias State msg = { next : Maybe Int, replies : Dict Int (Reply msg), routes : Dict Int (Route msg) }
 type SelfMsg
     = ListenFact Int String Int String Int
     | BodyFact Int String Int Bytes (List { name : String, value : String })
@@ -349,7 +349,7 @@ type SelfMsg
 
 type alias RawIncoming = { kind : String, request : RawRequest, bodyId : Int, responseId : Int, upgradeId : Int, reason : String }
 type alias MyRouter msg = Platform.Router msg SelfMsg
-init = Task.succeed { next = 1, replies = Dict.empty, routes = Dict.empty }
+init = Task.succeed { next = Just 1, replies = Dict.empty, routes = Dict.empty }
 
 onEffects router commands subscriptions state =
     let
@@ -406,19 +406,38 @@ rejectOverloaded router cmd state =
         CancelListen _ -> Task.succeed state
         Abort _ _ -> Task.succeed state
 
-nextReply reply state = let id = state.next in ( id, { state | next = id + 1, replies = Dict.insert id reply state.replies } )
-dispatch router cmd state = case cmd of
-    Listen _ (Bind host port_) (Options opts) callbacks -> let ( id, next ) = nextReply (ListenReply callbacks.onFinished) state in Elm.Kernel.HttpServer.listen router id host port_ opts ListenFact |> Task.andThen (\_ -> Platform.sendToApp router (callbacks.onStarted (Operation id))) |> Task.andThen (\_ -> Task.succeed next)
-    CancelListen (Operation id) -> Elm.Kernel.HttpServer.cancelListen id |> Task.andThen (\_ -> Task.succeed state)
-    ReadBody (BodyReader bodyId) (BodyLimit limit_) tag -> let ( id, next ) = nextReply (BodyReply tag) state in Elm.Kernel.HttpServer.readBody router id bodyId limit_ BodyFact |> Task.andThen (\_ -> Task.succeed next)
-    DiscardBody (BodyReader bodyId) tag -> let ( id, next ) = nextReply (DiscardReply tag) state in Elm.Kernel.HttpServer.discardBody router id bodyId UnitFact |> Task.andThen (\_ -> Task.succeed next)
-    Send (Response responseId) (ResponsePlan code hs (Body body)) tag -> let ( id, next ) = nextReply (SendReply tag) state in Elm.Kernel.HttpServer.send router id responseId code (rawHeaders hs) body TerminalFact |> Task.andThen (\_ -> Task.succeed next)
-    Stream (Response responseId) (StreamingPlan code hs) tag -> let ( id, next ) = nextReply (StreamReply tag) state in Elm.Kernel.HttpServer.stream router id responseId code (rawHeaders hs) WriterFact |> Task.andThen (\_ -> Task.succeed next)
-    Write (Writer writerId) body tag -> let ( id, next ) = nextReply (WriteReply tag) state in Elm.Kernel.HttpServer.write router id writerId body UnitFact |> Task.andThen (\_ -> Task.succeed next)
-    End (Writer writerId) tag -> let ( id, next ) = nextReply (EndReply tag) state in Elm.Kernel.HttpServer.end router id writerId TerminalFact |> Task.andThen (\_ -> Task.succeed next)
-    Abort (Response responseId) reason -> Elm.Kernel.HttpServer.abort responseId (abortName reason) |> Task.andThen (\_ -> Task.succeed state)
-    RejectUpgrade (Upgrade upgradeId) code tag -> let ( id, next ) = nextReply (UpgradeReply tag) state in Elm.Kernel.HttpServer.rejectUpgrade router id upgradeId code UnitFact |> Task.andThen (\_ -> Task.succeed next)
-    Close (Listener listenerId _) (ClosePlan timeout) tag -> let ( id, next ) = nextReply (CloseReply listenerId tag) state in Elm.Kernel.HttpServer.close router id listenerId timeout CloseFact |> Task.andThen (\_ -> Task.succeed next)
+maxSafeInteger : Int
+maxSafeInteger = 9007199254740991
+
+nextReply id reply state =
+    ( id
+    , { state
+        | next = if id == maxSafeInteger then Nothing else Just (id + 1)
+        , replies = Dict.insert id reply state.replies
+      }
+    )
+
+dispatch router cmd state =
+    case cmd of
+        CancelListen (Operation id) -> Elm.Kernel.HttpServer.cancelListen id |> Task.andThen (\_ -> Task.succeed state)
+        Abort (Response responseId) reason -> Elm.Kernel.HttpServer.abort responseId (abortName reason) |> Task.andThen (\_ -> Task.succeed state)
+        _ ->
+            case state.next of
+                Nothing -> rejectOverloaded router cmd state
+                Just id -> dispatchAllocated router id cmd state
+
+dispatchAllocated router allocated cmd state = case cmd of
+    Listen _ (Bind host port_) (Options opts) callbacks -> let ( id, next ) = nextReply allocated (ListenReply callbacks.onFinished) state in Elm.Kernel.HttpServer.listen router id host port_ opts ListenFact |> Task.andThen (\_ -> Platform.sendToApp router (callbacks.onStarted (Operation id))) |> Task.andThen (\_ -> Task.succeed next)
+    ReadBody (BodyReader bodyId) (BodyLimit limit_) tag -> let ( id, next ) = nextReply allocated (BodyReply tag) state in Elm.Kernel.HttpServer.readBody router id bodyId limit_ BodyFact |> Task.andThen (\_ -> Task.succeed next)
+    DiscardBody (BodyReader bodyId) tag -> let ( id, next ) = nextReply allocated (DiscardReply tag) state in Elm.Kernel.HttpServer.discardBody router id bodyId UnitFact |> Task.andThen (\_ -> Task.succeed next)
+    Send (Response responseId) (ResponsePlan code hs (Body body)) tag -> let ( id, next ) = nextReply allocated (SendReply tag) state in Elm.Kernel.HttpServer.send router id responseId code (rawHeaders hs) body TerminalFact |> Task.andThen (\_ -> Task.succeed next)
+    Stream (Response responseId) (StreamingPlan code hs) tag -> let ( id, next ) = nextReply allocated (StreamReply tag) state in Elm.Kernel.HttpServer.stream router id responseId code (rawHeaders hs) WriterFact |> Task.andThen (\_ -> Task.succeed next)
+    Write (Writer writerId) body tag -> let ( id, next ) = nextReply allocated (WriteReply tag) state in Elm.Kernel.HttpServer.write router id writerId body UnitFact |> Task.andThen (\_ -> Task.succeed next)
+    End (Writer writerId) tag -> let ( id, next ) = nextReply allocated (EndReply tag) state in Elm.Kernel.HttpServer.end router id writerId TerminalFact |> Task.andThen (\_ -> Task.succeed next)
+    RejectUpgrade (Upgrade upgradeId) code tag -> let ( id, next ) = nextReply allocated (UpgradeReply tag) state in Elm.Kernel.HttpServer.rejectUpgrade router id upgradeId code UnitFact |> Task.andThen (\_ -> Task.succeed next)
+    Close (Listener listenerId _) (ClosePlan timeout) tag -> let ( id, next ) = nextReply allocated (CloseReply listenerId tag) state in Elm.Kernel.HttpServer.close router id listenerId timeout CloseFact |> Task.andThen (\_ -> Task.succeed next)
+    CancelListen _ -> Task.succeed state
+    Abort _ _ -> Task.succeed state
 
 onSelfMsg router fact state =
     case fact of

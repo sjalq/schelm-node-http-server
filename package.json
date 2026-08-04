@@ -12,7 +12,7 @@
     "build": "node scripts/build-fixtures.cjs",
     "test:model": "node --test tests/model/*.test.cjs",
     "test:node": "node --test --test-timeout=60000 tests/node/*.test.cjs",
-    "test:workers": "node tests/run-workers.cjs",
+    "test:workers": "node tests/run-workers.cjs && node tests/manager-exhaustion.cjs",
     "test:perf": "node tests/perf/scale.test.cjs",
     "test:artifact": "node tests/artifact-gate.cjs",
     "test:archive": "node tests/archive-repro.cjs",
