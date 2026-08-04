@@ -1,0 +1,24 @@
+{
+  "name": "ws",
+  "version": "8.21.1",
+  "license": "MIT",
+  "source": "offline deterministic archive of harness package-lock resolved node_modules/ws",
+  "archive": "ws-8.21.1.tgz",
+  "sha256": "dce47885abd6d7a46828883efd65d196d6f1538474284b010fd2eecf7d2885bd",
+  "optionalNativeDependencies": [
+    "bufferutil",
+    "utf-8-validate"
+  ],
+  "runtimePolicy": "optional native dependencies absent; pure JavaScript fallback required",
+  "resolved": "https://registry.npmjs.org/ws/-/ws-8.21.1.tgz",
+  "upstreamIntegrity": "sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==",
+  "lockSource": "agent-harness package-lock.json at release 098d4b245aa590dffd1b6569fd043835a532ffec",
+  "archiveRules": {
+    "root": "package/",
+    "sort": "name",
+    "mtime": 0,
+    "uid": 0,
+    "gid": 0,
+    "numericOwner": true
+  }
+}

@@ -4,14 +4,17 @@ const assert = require("node:assert/strict");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
+const os = require("node:os");
+const cp = require("node:child_process");
 const { createRequire } = require("node:module");
 
-const harnessRequire = createRequire(
-  "/opt/elm-harness/releases/098d4b245aa590dffd1b6569fd043835a532ffec/package.json"
-);
-const wsPackage = harnessRequire("ws/package.json");
+const offlineRoot = fsMkdtemp();
+cp.execFileSync("tar", ["xzf", path.resolve(__dirname, "../../../vendor/ws-8.21.1.tgz"), "-C", offlineRoot]);
+const offlineRequire = createRequire(path.join(offlineRoot, "package", "package.json"));
+const wsPackage = offlineRequire("./package.json");
 assert.equal(wsPackage.version, "8.21.1", "fixture must use reviewed ws pin");
-const { WebSocket, WebSocketServer } = harnessRequire("ws");
+const { WebSocket, WebSocketServer } = offlineRequire(".");
+function fsMkdtemp() { return require("node:fs").mkdtempSync(path.join(os.tmpdir(), "schelm-ws-")); }
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -153,11 +156,16 @@ async function probePinnedWsUpgrade() {
   const adapter = makePrivateUpgradeAdapter(wss);
   let exactIdentity = false;
   let duplicateRejected = false;
+  let headBytes = 0;
   server.on("upgrade", (req, socket, head) => {
     const id = adapter.offer(req, socket, head);
     const original = { req, socket, head };
+    headBytes = head.length;
     const accepted = adapter.claim(id, (webSocket, acceptedReq) => {
-      exactIdentity = acceptedReq === original.req && socket === original.socket;
+      exactIdentity =
+        acceptedReq === original.req &&
+        socket === original.socket &&
+        head === original.head;
       webSocket.once("message", (data) => webSocket.send(data));
     });
     assert.equal(accepted, true);
@@ -183,12 +191,16 @@ async function probePinnedWsUpgrade() {
     server.close((error) => (error ? reject(error) : resolve()))
   );
   assert.equal(echoed, "probe");
+  // ws client implementations normally wait for 101 before sending frames, so
+  // this host probe proves exact object identity. M0c's raw-socket fixture is
+  // responsible for the stronger deliberately non-empty head proof.
   assert.equal(exactIdentity, true);
   assert.equal(duplicateRejected, true);
   assert.equal(adapter.size(), 0);
   return {
     wsVersion: wsPackage.version,
     exactIdentity,
+    headBytes,
     duplicateRejected,
     registryEmpty: true,
   };
@@ -199,6 +211,8 @@ async function probePinnedWsUpgrade() {
   const backpressure = await probeBackpressure();
   const upgrade = await probePinnedWsUpgrade();
   console.log(JSON.stringify({ cancellation, backpressure, upgrade }));
+  cp.execFileSync("chmod", ["-R", "u+w", offlineRoot]);
+  require("node:fs").rmSync(offlineRoot, { recursive: true, force: true });
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
