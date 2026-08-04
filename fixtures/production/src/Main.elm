@@ -41,10 +41,8 @@ update msg model =
                 Err error -> ( model, report (Encode.string (Server.listenErrorMessage error)) )
         Http event ->
             case event of
-                Server.RequestOffered _ _ body response ->
-                    case Server.bodyLimit 1024 of
-                        Ok limit_ -> ( model, Cmd.batch [ Server.readBody body limit_ BodyRead, Server.send response (Server.text 200 "ok") Sent ] )
-                        Err _ -> ( model, Cmd.none )
+                Server.RequestOffered _ _ _ response ->
+                    ( model, Cmd.batch [ report (Encode.string "initial-body-paused"), Server.send response (Server.text 200 "ok") Sent ] )
                 _ -> ( model, Cmd.none )
         BodyRead event ->
             case event of

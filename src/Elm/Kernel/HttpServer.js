@@ -4,7 +4,7 @@ import Elm.Kernel.List exposing (fromArray, toArray)
 import Elm.Kernel.Scheduler exposing (binding, succeed, rawSpawn)
 import Platform exposing (sendToSelf)
 */
-/* generated canonical-sha256 c7279861d5b43bf8db51f0116f45e5ef661c8ab1b25db2cce1946dd9680f275a */
+/* generated canonical-sha256 3fd978d1e546ac0bfd0ecb0d5c5af6c87237544c89e7bc80bdf6b6c640b851ba */
 "use strict";
 
 const http = require("node:http");
@@ -146,6 +146,10 @@ class ServerRegistry {
     const rawRequest = { id: requestId, method_: String(req.method || ""), target_: String(req.url || ""), targetForm_: classifyTarget(req.method, req.url || ""), version: String(req.httpVersion), headers_: rawPairs(req.rawHeaders, this.limit(listener.options, "headerPairs")), remote: String(req.socket.remoteAddress || ""), encrypted_: !!req.socket.encrypted };
     const incoming = { kind: "request", request: rawRequest, bodyId, responseId, upgradeId: 0, reason: "" };
     exchange.timer = setTimeout(() => { if (exchange.terminal || res.headersSent) return; fixedReject(res, 504); this.cleanupExchange(exchange, true, "rejected"); }, this.option(listener.options, "decisionTimeout"));
+    body.timer = setTimeout(() => {
+      if (body.pending || body.ended || exchange.terminal) return;
+      this.cleanupExchange(exchange, true, "forced");
+    }, this.option(listener.options, "bodyTimeout"));
     req.once("aborted", () => this.abortExchange(exchange, "client-closed"));
     req.once("error", () => this.abortExchange(exchange, "client-error"));
     this.hooks.incoming && this.hooks.incoming(listener.router, listenerId, incoming, exchange);
