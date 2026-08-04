@@ -77,6 +77,7 @@ effect module Schelm.Node.HttpServer where { command = MyCmd, subscription = MyS
     , StreamingPlan
     , streaming
     , stream
+    , send
     , Writer
     , WriteResult(..)
     , WriteError(..)

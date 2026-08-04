@@ -276,15 +276,15 @@ function $rawOptions(o) { return { limits: { connections:o.__$limits.__$connecti
 function $rawRequest(r) { return { __$id:r.id, __$method_:r.method_, __$target_:r.target_, __$targetForm_:r.targetForm_, __$version:r.version, __$headers_:__List_fromArray(r.headers_.map(function(h){return {__$name:h.name,__$value:h.value};})), __$remote:r.remote, __$encrypted_:r.encrypted_ }; }
 function $rawIncoming(r) { return { __$kind:r.kind, __$request:$rawRequest(r.request), __$bodyId:r.bodyId, __$responseId:r.responseId, __$upgradeId:r.upgradeId, __$reason:r.reason }; }
 var _HttpServer_configureRoutes = F3(function(router,routes,makeIncoming){ return $task(function(){ var seen=new Set(); __List_toArray(routes).forEach(function(r){ var id=r.__$listenerId; seen.add(id); $schelmRoutes.set(id,{router:router,generation:r.__$generation,present:r.__$present,makeIncoming:makeIncoming}); }); for(var entry of $schelmRoutes){ if(entry[1].router===router && !seen.has(entry[0])) $schelmRoutes.delete(entry[0]); } }); });
-var _HttpServer_listen = F7(function(router,op,host,port,options,makeFact){ return $task(function(){ $schelmRegistry.listen(router,op,host,port,$rawOptions(options),makeFact); }); });
+var _HttpServer_listen = F6(function(router,op,host,port,options,makeFact){ return $task(function(){ $schelmRegistry.listen(router,op,host,port,$rawOptions(options),function(a,b,c,d,e){return A5(makeFact,a,b,c,d,e);}); }); });
 var _HttpServer_cancelListen = function(op){ return $task(function(){ $schelmRegistry.cancelListen(op); }); };
-var _HttpServer_readBody = F6(function(router,op,id,limit,makeFact){ return $task(function(){ $schelmRegistry.readBody(router,op,id,limit,makeFact); }); });
-var _HttpServer_discardBody = F5(function(router,op,id,makeFact){ return $task(function(){ $schelmRegistry.discardBody(router,op,id,makeFact); }); });
-var _HttpServer_send = F8(function(router,op,id,code,headers,bytes,makeFact){ return $task(function(){ $schelmRegistry.send(router,op,id,code,headers,bytes,makeFact); }); });
-var _HttpServer_stream = F7(function(router,op,id,code,headers,makeFact){ return $task(function(){ $schelmRegistry.stream(router,op,id,code,headers,makeFact); }); });
-var _HttpServer_write = F6(function(router,op,id,bytes,makeFact){ return $task(function(){ $schelmRegistry.write(router,op,id,bytes,makeFact); }); });
-var _HttpServer_end = F5(function(router,op,id,makeFact){ return $task(function(){ $schelmRegistry.end(router,op,id,makeFact); }); });
+var _HttpServer_readBody = F5(function(router,op,id,limit,makeFact){ return $task(function(){ $schelmRegistry.readBody(router,op,id,limit,function(a,b,c,d,e){return A5(makeFact,a,b,c,d,e);}); }); });
+var _HttpServer_discardBody = F4(function(router,op,id,makeFact){ return $task(function(){ $schelmRegistry.discardBody(router,op,id,function(a,b){return A2(makeFact,a,b);}); }); });
+var _HttpServer_send = F7(function(router,op,id,code,headers,bytes,makeFact){ return $task(function(){ $schelmRegistry.send(router,op,id,code,headers,bytes,function(a,b){return A2(makeFact,a,b);}); }); });
+var _HttpServer_stream = F6(function(router,op,id,code,headers,makeFact){ return $task(function(){ $schelmRegistry.stream(router,op,id,code,headers,function(a,b,c){return A3(makeFact,a,b,c);}); }); });
+var _HttpServer_write = F5(function(router,op,id,bytes,makeFact){ return $task(function(){ $schelmRegistry.write(router,op,id,bytes,function(a,b){return A2(makeFact,a,b);}); }); });
+var _HttpServer_end = F4(function(router,op,id,makeFact){ return $task(function(){ $schelmRegistry.end(router,op,id,function(a,b){return A2(makeFact,a,b);}); }); });
 var _HttpServer_abort = F2(function(id,reason){ return $task(function(){ $schelmRegistry.abort(id,reason); }); });
-var _HttpServer_rejectUpgrade = F6(function(router,op,id,code,makeFact){ return $task(function(){ $schelmRegistry.rejectUpgrade(router,op,id,code,makeFact); }); });
+var _HttpServer_rejectUpgrade = F5(function(router,op,id,code,makeFact){ return $task(function(){ $schelmRegistry.rejectUpgrade(router,op,id,code,function(a,b){return A2(makeFact,a,b);}); }); });
 var _HttpServer_rejectStale = F2(function(responseId,upgradeId){ return $task(function(){ $schelmRegistry.rejectStale(responseId,upgradeId); }); });
-var _HttpServer_close = F6(function(router,op,id,timeout,makeFact){ return $task(function(){ $schelmRegistry.close(router,op,id,timeout,makeFact); }); });
+var _HttpServer_close = F5(function(router,op,id,timeout,makeFact){ return $task(function(){ $schelmRegistry.close(router,op,id,timeout,function(a,b,c,d,e){return A5(makeFact,a,b,c,d,e);}); }); });
