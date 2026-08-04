@@ -16,8 +16,9 @@ pull-driven. A delivered chunk retains its byte reservation only until the next 
 received or persisted bytes. Public binding requires an explicit acknowledgement.
 All limits and waiting states are bounded. Each effects wave admits at most 1024 commands and at most 4096 one-shot replies remain pending; excess commands receive typed overload results. Terminal listener close is the quiescent boundary that prunes its route generation tombstone; listener identities are never reused, so late facts remain stale without retaining sequential churn history. See module docs for recovery errors.
 
-WebSocket messages are deliberately not public API. A package-private,
-offline-pinned `ws` upgrade bridge exists for migration adapters only. A transferred upgrade remains kernel-owned until the adapter synchronously adopts it; malformed/rejected transfers and transfers that never settle are destroyed and released exactly once.
+WebSocket messages are deliberately not public API. Version 1.1 adds typed Unix-domain binding and two deliberately narrow migration commands, `transferRequest` and `transferUpgrade`. They synchronously offer the already-owned Node request/response or upgrade tuple to `globalThis.__schelmHttpLegacyTransfer`; the adapter returns `true` only after assuming lifecycle ownership. Rejection keeps request ownership available for another decision, while a rejected/malformed upgrade is destroyed and released. Successful transfer is exact-once and removes package ownership before Elm observes `Transferred`. This bridge exists to preserve established HTTP and WebSocket policy adapters while Schelm remains the sole listener authority; it is not a general raw-socket API.
+
+The package-private, offline-pinned `ws` upgrade bridge remains available for package tests and migration adapters. A transferred upgrade remains kernel-owned until the adapter synchronously adopts it; malformed/rejected transfers and transfers that never settle are destroyed and released exactly once.
 
 ## Guarantees and limits
 

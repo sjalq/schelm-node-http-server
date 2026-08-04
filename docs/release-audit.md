@@ -1,12 +1,12 @@
-# HTTP server v1 release audit
+# HTTP server v1.1 release audit
 
 Date: 2025-08-06. Authority runtime: pinned Node 24.4.1.
 
 ## Five principles
 
-1. **Ergonomic API:** opaque ports, binds, options, limits, listeners, readers,
-   responses, writers, and upgrades; safe text/bytes helpers; explicit public-bind
-   acknowledgement; recovery-oriented errors.
+1. **Ergonomic API:** opaque ports, validated Unix socket paths, binds, options,
+   limits, listeners, readers, responses, writers, and upgrades; safe text/bytes
+   helpers; explicit public-bind acknowledgement; recovery-oriented errors.
 2. **Production boundary:** one Elm effect manager owns app taggers and reply
    routing. The generated kernel stores primitive facts and Node resources only.
    Reply entries are removed before delivery; stable numeric route owners distinguish replacement without function equality;
@@ -18,10 +18,12 @@ Date: 2025-08-06. Authority runtime: pinned Node 24.4.1.
 4. **Honest transport semantics:** HTTP/1.1 keep-alive is sequential;
    concurrent pipelining is rejected. `AcceptedByNode` means `finish`, never peer
    delivery. Close-before-finish is peer closure. Graceful shutdown is bounded.
-5. **Private migration adapter:** no public WebSocket message/socket surface.
-   Upgrade offers are package-owned, exactly-once tokens. The only accepted
-   adapter dependency is the checked offline `ws` 8.21.1 archive using its
-   pure-JS fallback.
+5. **Narrow migration adapter:** no public WebSocket message/socket surface.
+   Elm can authorize synchronous exact-once transfer of an offered request or
+   upgrade to one process-global legacy policy adapter. JS performs adoption as
+   a fact/verb; it cannot bind or select policy. Rejected requests remain owned
+   for recovery; rejected upgrades fail closed. The package-private `ws` test
+   adapter uses the checked offline 8.21.1 archive and pure-JS fallback.
 
 ## Executable evidence
 
@@ -29,7 +31,9 @@ Date: 2025-08-06. Authority runtime: pinned Node 24.4.1.
 - Production Elm fixture compiles offline in debug and optimized modes; both run
   real HTTP and normalize to the same trace digest.
 - Bounded exhaustive model: 5,380,840 explored nodes, checked count and digest.
-- Real Node tests cover duplicate request headers, pull bodies, `finish`, actual
+- Real Node tests cover typed Unix bind/address/cleanup, synchronous exact-once
+  legacy request adoption, failed-closed legacy upgrade adoption, duplicate
+  request headers, pull bodies, `finish`, actual
   backpressure/drain over 4 MiB, pipelining rejection, slow headers, absent and
   timed-out decisions, exact non-empty upgrade `head`, duplicate claim, invalid-send recovery, disjoint close accounting, initial and delivered-copy body abandonment in real Node, initial abandonment in production debug/opt workers, and the production pinned adapter calling `handleUpgrade`.
 - Near-boundary injection covers budget, listener, request/body/response, writer, upgrade/request, and Elm manager identities. It proves the final safe identity succeeds exactly once, the next allocation rejects, compound allocations are atomic, and counters/maps/reservations/replies do not change on exhaustion in model/kernel, real Node, and debug/optimized production builds.

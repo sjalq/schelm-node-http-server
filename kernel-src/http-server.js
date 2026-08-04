@@ -116,7 +116,13 @@ class ServerRegistry {
   emit(router, value) { if (this.hooks.emit) this.hooks.emit(router, value); }
   option(raw, name) { return Number(field(raw, name)); }
   limit(raw, name) { return Number(field(field(raw, "limits"), name)); }
-  listen(router, operationId, host, port, rawOptions, makeFact) {
+  listen(router, operationId, bindKind, addressValue, port, rawOptions, makeFact) {
+    // Keep the package-private test/kernel call shape source-compatible while
+    // the Elm bridge supplies the explicit bind kind added in 1.1.0.
+    if (makeFact === undefined) {
+      makeFact = rawOptions; rawOptions = port; port = addressValue;
+      addressValue = bindKind; bindKind = "tcp";
+    }
     if (!this.ids.canAllocate(["listener"])) { this.emit(router, makeFact(operationId, "unsupported", 0, "", 0)); return; }
     const listenerReserve = this.budget.reserve(0, "listeners", 1, this.hard.listeners);
     if (!listenerReserve) { this.emit(router, makeFact(operationId, "unsupported", 0, "", 0)); return; }
@@ -143,13 +149,15 @@ class ServerRegistry {
       server.keepAliveTimeout = this.option(rawOptions, "keepAliveTimeout");
       if ("keepAliveTimeoutBuffer" in server) server.keepAliveTimeoutBuffer = Math.min(1000, server.keepAliveTimeout);
       server.maxRequestsPerSocket = this.limit(rawOptions, "requestsPerSocket");
-      server.listen({ host, port, exclusive: true }, () => {
+      const listenOptions = bindKind === "unix" ? { path: addressValue, exclusive: true } : { host: addressValue, port, exclusive: true };
+      server.listen(listenOptions, () => {
         if (!this.binds.delete(operationId)) { server.close(); return; }
         clearTimeout(bind.timer); server.removeListener("error", fail); bind.claimed = true;
         const address = server.address();
         const listener = { id: listenerId, server, router, options: rawOptions, reserve: listenerReserve, sockets: new Set(), activeBySocket: new Map(), exchanges: new Set(), upgrades: new Set(), closing: null, accepted: 0, completed: 0, rejected: 0, forced: 0 };
         this.listeners.set(listenerId, listener);
-        this.emit(router, makeFact(operationId, "ok", listenerId, address.address, address.port));
+        if (typeof address === "string") this.emit(router, makeFact(operationId, "ok", listenerId, address, 0));
+        else this.emit(router, makeFact(operationId, "ok", listenerId, address.address, address.port));
       });
     } catch (error) { fail(error); }
   }
@@ -281,6 +289,32 @@ class ServerRegistry {
   end(router, operationId, writerId, makeFact) {
     const writer = this.writers.get(writerId); if (!writer || writer.ended || writer.pending) { this.emit(router, makeFact(operationId, writer && writer.pending ? "pending" : "ended")); return; }
     writer.ended = true; this.writers.delete(writerId); this.terminal(writer.exchange, router, operationId, makeFact, this.option(writer.exchange.listener.options, "finishTimeout")); writer.exchange.res.end();
+  }
+  transferRequest(router, operationId, responseId, makeFact) {
+    const exchange = this.responses.get(responseId);
+    if (!exchange || exchange.terminal) { this.emit(router, makeFact(operationId, "unavailable")); return; }
+    const adapter = globalThis.__schelmHttpLegacyTransfer;
+    let adopted = false;
+    try { adopted = typeof adapter === "function" && adapter("request", { req: exchange.req, res: exchange.res }); } catch (_) { adopted = false; }
+    if (!adopted) { this.emit(router, makeFact(operationId, "rejected")); return; }
+    this.releaseExchangeForTransfer(exchange);
+    this.emit(router, makeFact(operationId, "ok"));
+  }
+  releaseExchangeForTransfer(exchange) {
+    if (exchange.terminal) return false;
+    exchange.terminal = true; clearTimeout(exchange.timer);
+    const body = this.bodies.get(exchange.bodyId); if (body) clearTimeout(body.timer); if (body && body.copyReserve) this.budget.release(body.copyReserve);
+    this.bodies.delete(exchange.bodyId); this.responses.delete(exchange.responseId); exchange.listener.exchanges.delete(exchange); exchange.listener.activeBySocket.delete(exchange.req.socket); this.budget.release(exchange.reserve);
+    exchange.listener.completed++; this.maybeClosed(exchange.listener); return true;
+  }
+  transferUpgradeToLegacy(router, operationId, id, makeFact) {
+    const offer = this.transferUpgrade(id);
+    if (!offer) { this.emit(router, makeFact(operationId, "unavailable")); return; }
+    const adapter = globalThis.__schelmHttpLegacyTransfer;
+    let adopted = false;
+    try { adopted = typeof adapter === "function" && adapter("upgrade", { req: offer.req, socket: offer.socket, head: offer.head }); } catch (_) { adopted = false; }
+    if (adopted && this.adoptTransferredUpgrade(offer)) this.emit(router, makeFact(operationId, "ok"));
+    else { this.failTransferredUpgrade(offer); this.emit(router, makeFact(operationId, "rejected")); }
   }
   abort(responseId) { const exchange = this.responses.get(responseId); if (exchange) this.cleanupExchange(exchange, true); }
   abortExchange(exchange, reason) { if (exchange.terminal) return; if (this.hooks.aborted) this.hooks.aborted(exchange.listener.router, exchange, reason); this.cleanupExchange(exchange, true, "rejected"); }
