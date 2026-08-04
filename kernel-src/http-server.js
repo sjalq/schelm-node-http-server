@@ -131,7 +131,7 @@ class ServerRegistry {
     // Listener ownership is established at bind completion, not after an Elm
     // subscription turn. The package retains the exchange/upgrade unless this
     // synchronous boundary adopts it; otherwise the normal typed route applies.
-    const transfer = globalThis.__schelmHttpLegacyTransfer;
+    const transfer = globalThis["__schelmHttpLegacyTransfer"];
     const bind = { operationId, listenerId, server, reserve: listenerReserve, claimed: false, router, makeFact, timer: null };
     this.binds.set(operationId, bind);
     const fail = error => {
@@ -189,7 +189,7 @@ class ServerRegistry {
     socket.once("close", () => { clearTimeout(socket.__schelmHeaderTimer); listener.sockets.delete(socket); listener.activeBySocket.delete(socket); this.budget.release(reserve); this.maybeClosed(listener); });
   }
   offerRequest(listenerId, req, res) {
-    const transfer = globalThis.__schelmHttpLegacyTransfer;
+    const transfer = globalThis["__schelmHttpLegacyTransfer"];
     if (typeof transfer === "function") {
       let adopted = false;
       try { adopted = transfer("request", { req, res }) === true; } catch (_) { adopted = false; }
@@ -314,7 +314,7 @@ class ServerRegistry {
   transferRequest(router, operationId, responseId, makeFact) {
     const exchange = this.responses.get(responseId);
     if (!exchange || exchange.terminal) { this.emit(router, makeFact(operationId, "unavailable")); return; }
-    const adapter = globalThis.__schelmHttpLegacyTransfer;
+    const adapter = globalThis["__schelmHttpLegacyTransfer"];
     let adopted = false;
     try { adopted = typeof adapter === "function" && adapter("request", { req: exchange.req, res: exchange.res }); } catch (_) { adopted = false; }
     if (!adopted) { this.emit(router, makeFact(operationId, "rejected")); return; }
@@ -331,7 +331,7 @@ class ServerRegistry {
   transferUpgradeToLegacy(router, operationId, id, makeFact) {
     const offer = this.transferUpgrade(id);
     if (!offer) { this.emit(router, makeFact(operationId, "unavailable")); return; }
-    const adapter = globalThis.__schelmHttpLegacyTransfer;
+    const adapter = globalThis["__schelmHttpLegacyTransfer"];
     let adopted = false;
     try { adopted = typeof adapter === "function" && adapter("upgrade", { req: offer.req, socket: offer.socket, head: offer.head }); } catch (_) { adopted = false; }
     if (adopted && this.adoptTransferredUpgrade(offer)) this.emit(router, makeFact(operationId, "ok"));
