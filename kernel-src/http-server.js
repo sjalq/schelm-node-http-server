@@ -128,6 +128,10 @@ class ServerRegistry {
     if (!listenerReserve) { this.emit(router, makeFact(operationId, "unsupported", 0, "", 0)); return; }
     const listenerId = this.ids.allocate(["listener"])[0];
     const server = http.createServer({ insecureHTTPParser: false, requireHostHeader: true }, (req, res) => this.offerRequest(listenerId, req, res));
+    // Listener ownership is established at bind completion, not after an Elm
+    // subscription turn. The package retains the exchange/upgrade unless this
+    // synchronous boundary adopts it; otherwise the normal typed route applies.
+    const transfer = globalThis.__schelmHttpLegacyTransfer;
     const bind = { operationId, listenerId, server, reserve: listenerReserve, claimed: false, router, makeFact, timer: null };
     this.binds.set(operationId, bind);
     const fail = error => {
@@ -140,7 +144,16 @@ class ServerRegistry {
     const bindTimeout = Math.min(this.option(rawOptions, "headersTimeout"), 600000);
     bind.timer = setTimeout(() => { if (!this.binds.delete(operationId)) return; server.close(); this.budget.release(listenerReserve); this.emit(router, makeFact(operationId, "timeout", 0, "", 0)); }, bindTimeout);
     server.on("connection", socket => this.trackSocket(listenerId, socket));
-    server.on("upgrade", (req, socket, head) => this.offerUpgrade(listenerId, req, socket, head));
+    server.on("upgrade", (req, socket, head) => {
+      if (typeof transfer === "function") {
+        let adopted = false;
+        try { adopted = transfer("upgrade", { req, socket, head }) === true; } catch (_) { adopted = false; }
+        if (adopted) return;
+        socket.destroy();
+        return;
+      }
+      this.offerUpgrade(listenerId, req, socket, head);
+    });
     server.on("clientError", (_error, socket) => socketReject(socket, 400));
     try {
       server.maxHeadersCount = this.limit(rawOptions, "headerPairs");
@@ -176,6 +189,14 @@ class ServerRegistry {
     socket.once("close", () => { clearTimeout(socket.__schelmHeaderTimer); listener.sockets.delete(socket); listener.activeBySocket.delete(socket); this.budget.release(reserve); this.maybeClosed(listener); });
   }
   offerRequest(listenerId, req, res) {
+    const transfer = globalThis.__schelmHttpLegacyTransfer;
+    if (typeof transfer === "function") {
+      let adopted = false;
+      try { adopted = transfer("request", { req, res }) === true; } catch (_) { adopted = false; }
+      if (adopted) return;
+      fixedReject(res, 503);
+      return;
+    }
     const listener = this.listeners.get(listenerId);
     if (!listener || listener.closing) { fixedReject(res, 503); return; }
     clearTimeout(req.socket.__schelmHeaderTimer); req.socket.__schelmHeaderTimer = null;

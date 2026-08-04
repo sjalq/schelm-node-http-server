@@ -38,7 +38,68 @@ test("typed unix bind reports its path and leaves socket cleanup to the owner", 
   fs.rmdirSync(dir);
 });
 
-test("legacy request transfer is synchronous, exact once, and releases package ownership", async () => {
+test("listener boundary synchronously adopts legacy requests before typed routing", async () => {
+  let listened;
+  let typedOffers = 0;
+  const registry = new ServerRegistry({
+    emit: (_router, value) => { if (value[0] === 1) listened(value); },
+    incoming: () => { typedOffers += 1; },
+  });
+  globalThis.__schelmHttpLegacyTransfer = (kind, owned) => {
+    assert.equal(kind, "request");
+    owned.res.writeHead(200, { "content-type": "text/plain" });
+    owned.res.end("direct");
+    return true;
+  };
+  try {
+    const listenFact = await new Promise((resolve) => {
+      listened = resolve;
+      registry.listen({}, 1, "tcp", "127.0.0.1", 0, options, fact);
+    });
+    const reply = await new Promise((resolve, reject) => {
+      http.get({ host: "127.0.0.1", port: listenFact[4], path: "/direct" }, (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString() }));
+      }).on("error", reject);
+    });
+    assert.deepEqual(reply, { status: 200, body: "direct" });
+    assert.equal(typedOffers, 0);
+    assert.equal(registry.responses.size, 0);
+    await close(registry, listenFact[2]);
+  } finally {
+    delete globalThis.__schelmHttpLegacyTransfer;
+  }
+});
+
+test("listener boundary destroys upgrades rejected or failed by the legacy adapter", async () => {
+  for (const behavior of ["reject", "throw"]) {
+    let listened;
+    const registry = new ServerRegistry({ emit: (_router, value) => { if (value[0] === 1) listened(value); } });
+    globalThis.__schelmHttpLegacyTransfer = () => {
+      if (behavior === "throw") throw new Error("adapter failed");
+      return false;
+    };
+    try {
+      const listenFact = await new Promise((resolve) => {
+        listened = resolve;
+        registry.listen({}, 1, "tcp", "127.0.0.1", 0, options, fact);
+      });
+      await new Promise((resolve, reject) => {
+        const socket = require("node:net").connect(listenFact[4], "127.0.0.1", () => socket.write("GET /ws HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: bad\r\nSec-WebSocket-Version: 13\r\n\r\n"));
+        const timer = setTimeout(() => reject(new Error(`${behavior} socket remained open`)), 500);
+        socket.on("error", (error) => { if (error.code !== "ECONNRESET") reject(error); });
+        socket.on("close", () => { clearTimeout(timer); resolve(); });
+      });
+      assert.equal(registry.upgrades.size, 0);
+      await close(registry, listenFact[2]);
+    } finally {
+      delete globalThis.__schelmHttpLegacyTransfer;
+    }
+  }
+});
+
+test("explicit request transfer is synchronous, exact once, and releases package ownership", async () => {
   let listened;
   let incoming;
   const registry = new ServerRegistry({
@@ -51,12 +112,6 @@ test("legacy request transfer is synchronous, exact once, and releases package o
   });
   const listenerId = listenFact[2];
   const port = listenFact[4];
-  globalThis.__schelmHttpLegacyTransfer = (kind, owned) => {
-    assert.equal(kind, "request");
-    owned.res.writeHead(200, { "content-type": "text/plain" });
-    owned.res.end("legacy");
-    return true;
-  };
   try {
     const reply = new Promise((resolve, reject) => {
       const req = http.get({ host: "127.0.0.1", port, path: "/legacy" }, (res) => {
@@ -67,6 +122,12 @@ test("legacy request transfer is synchronous, exact once, and releases package o
       req.on("error", reject);
     });
     const offered = await new Promise((resolve) => { incoming = resolve; });
+    globalThis.__schelmHttpLegacyTransfer = (kind, owned) => {
+      assert.equal(kind, "request");
+      owned.res.writeHead(200, { "content-type": "text/plain" });
+      owned.res.end("legacy");
+      return true;
+    };
     const transfer = await new Promise((resolve) => {
       registry.hooks.emit = (_router, value) => value[0] === 2 && resolve(value);
       registry.transferRequest({}, 2, offered.responseId, fact);

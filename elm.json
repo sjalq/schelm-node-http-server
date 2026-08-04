@@ -1,14 +1,16 @@
 {
-  "type": "package",
-  "name": "sjalq/schelm-node-http-server",
-  "summary": "Bounded cooperative HTTP/1.1 servers for Node.js",
-  "license": "BSD-3-Clause",
-  "version": "1.1.0",
-  "elm-version": "0.19.0 <= v < 0.20.0",
-  "exposed-modules": ["Schelm.Node.HttpServer"],
-  "dependencies": {
-    "elm/core": "1.0.0 <= v < 2.0.0",
-    "elm/bytes": "1.0.0 <= v < 2.0.0"
-  },
-  "test-dependencies": {}
+    "type": "package",
+    "name": "sjalq/schelm-node-http-server",
+    "summary": "Bounded cooperative HTTP/1.1 servers for Node.js",
+    "license": "BSD-3-Clause",
+    "version": "1.2.0",
+    "elm-version": "0.19.0 <= v < 0.20.0",
+    "exposed-modules": [
+        "Schelm.Node.HttpServer"
+    ],
+    "dependencies": {
+        "elm/core": "1.0.0 <= v < 2.0.0",
+        "elm/bytes": "1.0.0 <= v < 2.0.0"
+    },
+    "test-dependencies": {}
 }
