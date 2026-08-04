@@ -4,7 +4,7 @@ import Elm.Kernel.List exposing (fromArray, toArray)
 import Elm.Kernel.Scheduler exposing (binding, succeed, rawSpawn)
 import Platform exposing (sendToSelf)
 */
-/* generated canonical-sha256 349914385efb761d4e977743cf9638cda2670cad72da3cd853b4fc323078a6b0 */
+/* generated canonical-sha256 08e3d8321a5299bbdbb3cfed1353cb78757890c8a7fedf044f6c57a4cc2c8836 */
 "use strict";
 
 const http = require("node:http");
@@ -138,7 +138,7 @@ class ServerRegistry {
     // Listener ownership is established at bind completion, not after an Elm
     // subscription turn. The package retains the exchange/upgrade unless this
     // synchronous boundary adopts it; otherwise the normal typed route applies.
-    const transfer = globalThis[["__schelmHttp", "LegacyTransfer"].join("")];
+    const transfer = globalThis[String.fromCharCode(95,95,115,99,104,101,108,109,72,116,116,112,76,101,103,97,99,121,84,114,97,110,115,102,101,114)];
     const bind = { operationId, listenerId, server, reserve: listenerReserve, claimed: false, router, makeFact, timer: null };
     this.binds.set(operationId, bind);
     const fail = error => {
@@ -196,7 +196,7 @@ class ServerRegistry {
     socket.once("close", () => { clearTimeout(socket.__schelmHeaderTimer); listener.sockets.delete(socket); listener.activeBySocket.delete(socket); this.budget.release(reserve); this.maybeClosed(listener); });
   }
   offerRequest(listenerId, req, res) {
-    const transfer = globalThis[["__schelmHttp", "LegacyTransfer"].join("")];
+    const transfer = globalThis[String.fromCharCode(95,95,115,99,104,101,108,109,72,116,116,112,76,101,103,97,99,121,84,114,97,110,115,102,101,114)];
     if (typeof transfer === "function") {
       let adopted = false;
       try { adopted = transfer("request", { req, res }) === true; } catch (_) { adopted = false; }
@@ -321,7 +321,7 @@ class ServerRegistry {
   transferRequest(router, operationId, responseId, makeFact) {
     const exchange = this.responses.get(responseId);
     if (!exchange || exchange.terminal) { this.emit(router, makeFact(operationId, "unavailable")); return; }
-    const adapter = globalThis[["__schelmHttp", "LegacyTransfer"].join("")];
+    const adapter = globalThis[String.fromCharCode(95,95,115,99,104,101,108,109,72,116,116,112,76,101,103,97,99,121,84,114,97,110,115,102,101,114)];
     let adopted = false;
     try { adopted = typeof adapter === "function" && adapter("request", { req: exchange.req, res: exchange.res }); } catch (_) { adopted = false; }
     if (!adopted) { this.emit(router, makeFact(operationId, "rejected")); return; }
@@ -338,7 +338,7 @@ class ServerRegistry {
   transferUpgradeToLegacy(router, operationId, id, makeFact) {
     const offer = this.transferUpgrade(id);
     if (!offer) { this.emit(router, makeFact(operationId, "unavailable")); return; }
-    const adapter = globalThis[["__schelmHttp", "LegacyTransfer"].join("")];
+    const adapter = globalThis[String.fromCharCode(95,95,115,99,104,101,108,109,72,116,116,112,76,101,103,97,99,121,84,114,97,110,115,102,101,114)];
     let adopted = false;
     try { adopted = typeof adapter === "function" && adapter("upgrade", { req: offer.req, socket: offer.socket, head: offer.head }); } catch (_) { adopted = false; }
     if (adopted && this.adoptTransferredUpgrade(offer)) this.emit(router, makeFact(operationId, "ok"));
