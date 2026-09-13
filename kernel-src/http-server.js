@@ -5,10 +5,13 @@ const crypto = require("node:crypto");
 
 const HARD = Object.freeze({ listeners: 512, connections: 10000, exchanges: 10000, requestBytes: 67108864, responseBytes: 67108864, upgrades: 10000 });
 const EMPTY_BYTES = () => new DataView(new ArrayBuffer(0));
-const field = (value, name) => value[name] === undefined ? value["__$" + name] : value[name];
-const listArray = value => typeof __List_toArray === "function" ? __List_toArray(value) : value;
+const listArray = value => Array.isArray(value) ? value : (typeof __List_toArray === "function" ? __List_toArray(value) : value);
 const bytesBuffer = value => Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
+// Source-level __$field is rewritten by debug and --optimize; concatenated field names are not.
+function recordField(rewritten, plain) {
+  return rewritten !== undefined ? rewritten : plain;
+}
 
 class SafeIds {
   constructor(names = ["default"]) { this.next = new Map(names.map(name => [name, 1])); }
@@ -32,9 +35,9 @@ class RouteRegistry {
   reconcile(router, routes, makeIncoming) {
     const seen = new Set();
     for (const raw of routes) {
-      const listenerId = Array.isArray(raw) ? raw[0] : field(raw, "listenerId");
-      const generation = Array.isArray(raw) ? raw[1] : field(raw, "generation");
-      const present = Array.isArray(raw) ? raw[2] : field(raw, "present");
+      const listenerId = Array.isArray(raw) ? raw[0] : recordField(raw.__$listenerId, raw.listenerId);
+      const generation = Array.isArray(raw) ? raw[1] : recordField(raw.__$generation, raw.generation);
+      const present = Array.isArray(raw) ? raw[2] : recordField(raw.__$present, raw.present);
       seen.add(listenerId);
       this.routes.set(listenerId, { router, generation, present, makeIncoming });
     }
@@ -114,8 +117,8 @@ class ServerRegistry {
     this.hard = hooks.hardLimits || HARD; this.budget = new Budget(this.hard);
   }
   emit(router, value) { if (this.hooks.emit) this.hooks.emit(router, value); }
-  option(raw, name) { return Number(field(raw, name)); }
-  limit(raw, name) { return Number(field(field(raw, "limits"), name)); }
+  option(raw, name) { return Number(raw[name]); }
+  limit(raw, name) { return Number(raw.limits[name]); }
   listen(router, operationId, bindKind, addressValue, port, rawOptions, makeFact) {
     // Keep the package-private test/kernel call shape source-compatible while
     // the Elm bridge supplies the explicit bind kind added in 1.1.0.
@@ -266,7 +269,7 @@ class ServerRegistry {
   applyHead(exchange, code, headers) {
     if (exchange.terminal || exchange.res.headersSent || code < 200 || code > 999) return false;
     if ((code === 204 || code === 304 || exchange.req.method === "HEAD") && exchange.__hasBody) return false;
-    const object = Object.create(null); for (const h of listArray(headers)) { const name = String(field(h, "name")); const value = String(field(h, "value")); if (["connection", "transfer-encoding", "content-length", "upgrade"].includes(name)) return false; if (object[name] === undefined) object[name] = value; else object[name] = [].concat(object[name], value); }
+    const object = Object.create(null); for (const h of listArray(headers)) { const name = String(recordField(h.__$name, h.name)); const value = String(recordField(h.__$value, h.value)); if (["connection", "transfer-encoding", "content-length", "upgrade"].includes(name)) return false; if (object[name] === undefined) object[name] = value; else object[name] = [].concat(object[name], value); }
     exchange.res.writeHead(code, object); return true;
   }
   terminal(exchange, router, operationId, makeFact, timeout) {

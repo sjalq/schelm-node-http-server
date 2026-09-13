@@ -35,6 +35,17 @@ The package-private, offline-pinned `ws` upgrade bridge remains available for pa
 - This package does not claim peer delivery, TLS termination, HTTP/2, or a
   public WebSocket API.
 
-`npm test` is the release gate: kernel assembly, isolated offline debug/optimized
+Version 1.2.4 keeps application response headers under `--optimize` by reading
+Elm records through source-level `__$` field syntax (the compiler never rewrites
+a runtime `"__$"+name` string). Response completion remains the `send`/`end`
+callback (`AcceptedByNode` means Node emitted `finish`). `Event.ResponseFinished`
+is not part of this API: design revision A/B list only request, upgrade, abort,
+and listener-failure as unsolicited events, and the constructor was never
+produced.
+
+`npm test` is the release gate: kernel assembly, a schelm debug/`--optimize`
+listen/send/close header-parity cycle, isolated offline debug/optimized
 Elm builds, model/runtime/fault/scale suites, artifact contamination checks,
 deterministic `ws` archive reproduction, and pinned toolchain provenance.
+The header-parity gate uses `schelm make --no-wire` with a temporary
+`SCHELM_HOME` and does not use the vendored old-fork compiler.

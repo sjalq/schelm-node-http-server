@@ -22,8 +22,9 @@ retain one write until Node accepts it or `drain` fires. Every waiting state has
 a configured deadline and every listener has admission budgets.
 
 A `Listener`, `BodyReader`, `Response`, or `Writer` is a cooperative ownership
-token, not a security capability. `finish` is reported as `AcceptedByNode`, not
-peer delivery. Public exposure is explicit. Node host objects and raw upgrade
+token, not a security capability. `finish` is reported as `AcceptedByNode` on
+the `send`/`end` command result, not as an unsolicited `Event` and not as peer
+delivery. Public exposure is explicit. Node host objects and raw upgrade
 sockets never cross this API.
 
 @docs Permission, initialize
@@ -597,7 +598,6 @@ type Event
     = RequestOffered Listener Request BodyReader Response
     | UpgradeOffered Listener Upgrade
     | RequestAborted Listener RequestId AbortReason
-    | ResponseFinished Listener RequestId ResponseResult
     | ListenerFailed Listener ListenError
 
 

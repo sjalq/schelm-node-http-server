@@ -4,7 +4,7 @@ import Elm.Kernel.List exposing (fromArray, toArray)
 import Elm.Kernel.Scheduler exposing (binding, succeed, rawSpawn)
 import Platform exposing (sendToSelf)
 */
-/* generated canonical-sha256 08e3d8321a5299bbdbb3cfed1353cb78757890c8a7fedf044f6c57a4cc2c8836 */
+/* generated canonical-sha256 c8c7adc5cc0d9e4f8cbc3a146ea1f47cdd8ec0cc448a0e33d85d0443a4c8f98a */
 "use strict";
 
 const http = require("node:http");
@@ -12,10 +12,13 @@ const crypto = require("node:crypto");
 
 const HARD = Object.freeze({ listeners: 512, connections: 10000, exchanges: 10000, requestBytes: 67108864, responseBytes: 67108864, upgrades: 10000 });
 const EMPTY_BYTES = () => new DataView(new ArrayBuffer(0));
-const field = (value, name) => value[name] === undefined ? value["__$" + name] : value[name];
-const listArray = value => typeof __List_toArray === "function" ? __List_toArray(value) : value;
+const listArray = value => Array.isArray(value) ? value : (typeof __List_toArray === "function" ? __List_toArray(value) : value);
 const bytesBuffer = value => Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
+// Source-level __$field is rewritten by debug and --optimize; concatenated field names are not.
+function recordField(rewritten, plain) {
+  return rewritten !== undefined ? rewritten : plain;
+}
 
 class SafeIds {
   constructor(names = ["default"]) { this.next = new Map(names.map(name => [name, 1])); }
@@ -39,9 +42,9 @@ class RouteRegistry {
   reconcile(router, routes, makeIncoming) {
     const seen = new Set();
     for (const raw of routes) {
-      const listenerId = Array.isArray(raw) ? raw[0] : field(raw, "listenerId");
-      const generation = Array.isArray(raw) ? raw[1] : field(raw, "generation");
-      const present = Array.isArray(raw) ? raw[2] : field(raw, "present");
+      const listenerId = Array.isArray(raw) ? raw[0] : recordField(raw.__$listenerId, raw.listenerId);
+      const generation = Array.isArray(raw) ? raw[1] : recordField(raw.__$generation, raw.generation);
+      const present = Array.isArray(raw) ? raw[2] : recordField(raw.__$present, raw.present);
       seen.add(listenerId);
       this.routes.set(listenerId, { router, generation, present, makeIncoming });
     }
@@ -121,8 +124,8 @@ class ServerRegistry {
     this.hard = hooks.hardLimits || HARD; this.budget = new Budget(this.hard);
   }
   emit(router, value) { if (this.hooks.emit) this.hooks.emit(router, value); }
-  option(raw, name) { return Number(field(raw, name)); }
-  limit(raw, name) { return Number(field(field(raw, "limits"), name)); }
+  option(raw, name) { return Number(raw[name]); }
+  limit(raw, name) { return Number(raw.limits[name]); }
   listen(router, operationId, bindKind, addressValue, port, rawOptions, makeFact) {
     // Keep the package-private test/kernel call shape source-compatible while
     // the Elm bridge supplies the explicit bind kind added in 1.1.0.
@@ -273,7 +276,7 @@ class ServerRegistry {
   applyHead(exchange, code, headers) {
     if (exchange.terminal || exchange.res.headersSent || code < 200 || code > 999) return false;
     if ((code === 204 || code === 304 || exchange.req.method === "HEAD") && exchange.__hasBody) return false;
-    const object = Object.create(null); for (const h of listArray(headers)) { const name = String(field(h, "name")); const value = String(field(h, "value")); if (["connection", "transfer-encoding", "content-length", "upgrade"].includes(name)) return false; if (object[name] === undefined) object[name] = value; else object[name] = [].concat(object[name], value); }
+    const object = Object.create(null); for (const h of listArray(headers)) { const name = String(recordField(h.__$name, h.name)); const value = String(recordField(h.__$value, h.value)); if (["connection", "transfer-encoding", "content-length", "upgrade"].includes(name)) return false; if (object[name] === undefined) object[name] = value; else object[name] = [].concat(object[name], value); }
     exchange.res.writeHead(code, object); return true;
   }
   terminal(exchange, router, operationId, makeFact, timeout) {
@@ -440,13 +443,15 @@ function $task(fn) { return __Scheduler_binding(function(done) { try { fn(); } f
 function $rawOptions(o) { return { limits: { connections:o.__$limits.__$connections, exchanges:o.__$limits.__$exchanges, requestBytes:o.__$limits.__$requestBytes, responseBytes:o.__$limits.__$responseBytes, upgrades:o.__$limits.__$upgrades, closeWaiters:o.__$limits.__$closeWaiters, requestsPerSocket:o.__$limits.__$requestsPerSocket, headerPairs:o.__$limits.__$headerPairs }, headersTimeout:o.__$headersTimeout, requestTimeout:o.__$requestTimeout, decisionTimeout:o.__$decisionTimeout, bodyTimeout:o.__$bodyTimeout, writeTimeout:o.__$writeTimeout, finishTimeout:o.__$finishTimeout, keepAliveTimeout:o.__$keepAliveTimeout, upgradeTimeout:o.__$upgradeTimeout, gracefulTimeout:o.__$gracefulTimeout }; }
 function $rawRequest(r) { return { __$id:r.id, __$method_:r.method_, __$target_:r.target_, __$targetForm_:r.targetForm_, __$version:r.version, __$headers_:__List_fromArray(r.headers_.map(function(h){return {__$name:h.name,__$value:h.value};})), __$remote:r.remote, __$encrypted_:r.encrypted_ }; }
 function $rawIncoming(r) { return { __$kind:r.kind, __$request:$rawRequest(r.request), __$bodyId:r.bodyId, __$responseId:r.responseId, __$upgradeId:r.upgradeId, __$reason:r.reason }; }
+function $plainHeaders(hs) { return __List_toArray(hs).map(function(h){ return { name:h.__$name, value:h.__$value }; }); }
+function $elmHeaders(xs) { return __List_fromArray((Array.isArray(xs)?xs:[]).map(function(h){ return {__$name:h.name,__$value:h.value}; })); }
 var _HttpServer_configureRoutes = F3(function(router,routes,makeIncoming){ return $task(function(){ $schelmRoutes.reconcile(router,__List_toArray(routes).map(function(r){ return [r.__$listenerId,r.__$generation,r.__$present]; }),makeIncoming); }); });
 var _HttpServer_listen = F7(function(router,op,kind,address,port,options,makeFact){ return $task(function(){ $schelmRegistry.listen(router,op,kind,address,port,$rawOptions(options),function(a,b,c,d,e){return A5(makeFact,a,b,c,d,e);}); }); });
 var _HttpServer_cancelListen = function(op){ return $task(function(){ $schelmRegistry.cancelListen(op); }); };
-var _HttpServer_readBody = F5(function(router,op,id,limit,makeFact){ return $task(function(){ $schelmRegistry.readBody(router,op,id,limit,function(a,b,c,d,e){return A5(makeFact,a,b,c,d,e);}); }); });
+var _HttpServer_readBody = F5(function(router,op,id,limit,makeFact){ return $task(function(){ $schelmRegistry.readBody(router,op,id,limit,function(a,b,c,d,e){return A5(makeFact,a,b,c,d,$elmHeaders(e));}); }); });
 var _HttpServer_discardBody = F4(function(router,op,id,makeFact){ return $task(function(){ $schelmRegistry.discardBody(router,op,id,function(a,b){return A2(makeFact,a,b);}); }); });
-var _HttpServer_send = F7(function(router,op,id,code,headers,bytes,makeFact){ return $task(function(){ $schelmRegistry.send(router,op,id,code,headers,bytes,function(a,b){return A2(makeFact,a,b);}); }); });
-var _HttpServer_stream = F6(function(router,op,id,code,headers,makeFact){ return $task(function(){ $schelmRegistry.stream(router,op,id,code,headers,function(a,b,c){return A3(makeFact,a,b,c);}); }); });
+var _HttpServer_send = F7(function(router,op,id,code,headers,bytes,makeFact){ return $task(function(){ $schelmRegistry.send(router,op,id,code,$plainHeaders(headers),bytes,function(a,b){return A2(makeFact,a,b);}); }); });
+var _HttpServer_stream = F6(function(router,op,id,code,headers,makeFact){ return $task(function(){ $schelmRegistry.stream(router,op,id,code,$plainHeaders(headers),function(a,b,c){return A3(makeFact,a,b,c);}); }); });
 var _HttpServer_write = F5(function(router,op,id,bytes,makeFact){ return $task(function(){ $schelmRegistry.write(router,op,id,bytes,function(a,b){return A2(makeFact,a,b);}); }); });
 var _HttpServer_end = F4(function(router,op,id,makeFact){ return $task(function(){ $schelmRegistry.end(router,op,id,function(a,b){return A2(makeFact,a,b);}); }); });
 var _HttpServer_abort = F2(function(id,reason){ return $task(function(){ $schelmRegistry.abort(id,reason); }); });
